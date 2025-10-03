@@ -1,0 +1,7 @@
+<?jelly escape-by-default='true'?>
+<div>
+    ArmorCode Release Gate plugin for Jenkins enables security teams to enforce security requirements as part of the CI/CD pipeline.
+    It provides capabilities to block or warn builds based on security validation results from the ArmorCode platform.
+    Features include discovery with cron-based scheduling, flexible release gate controls, include and exclude job-based filtering,
+    and detailed feedback for developers.
+</div>

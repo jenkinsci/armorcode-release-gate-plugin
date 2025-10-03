@@ -1,0 +1,8 @@
+<div>
+    <p>Determines how the build responds to security validation failures:</p>
+    <ul>
+        <li><strong>Block build on failure (block)</strong>: The build will fail if ArmorCode finds security issues that violate release criteria. This is the recommended setting for enforcement.</li>
+        <li><strong>Mark as unstable but continue (warn)</strong>: The build will be marked as unstable but allowed to proceed if security issues are found. Use this for initial integration or when you want visibility without blocking.</li>
+    </ul>
+    <p><strong>Note:</strong> Block mode is the default setting. When using block mode, the 'mode' parameter will not appear in the generated pipeline syntax to keep it clean.</p>
+</div>

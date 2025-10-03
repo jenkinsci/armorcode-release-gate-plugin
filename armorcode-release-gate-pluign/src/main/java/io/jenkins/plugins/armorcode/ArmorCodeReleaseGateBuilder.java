@@ -1,0 +1,588 @@
+package io.jenkins.plugins.armorcode;
+
+import edu.umd.cs.findbugs.annotations.NonNull;
+import hudson.AbortException;
+import hudson.Extension;
+import hudson.FilePath;
+import hudson.Launcher;
+import hudson.model.Run;
+import hudson.model.TaskListener;
+import hudson.model.Result;
+import hudson.tasks.Builder;
+import hudson.tasks.BuildStepDescriptor;
+import hudson.tasks.BuildStepMonitor;
+import io.jenkins.plugins.armorcode.config.ArmorCodeGlobalConfig;
+import io.jenkins.plugins.armorcode.credentials.CredentialsUtils;
+import jenkins.model.CauseOfInterruption;
+import jenkins.model.InterruptedBuildAction;
+import jenkins.tasks.SimpleBuildStep;
+import net.sf.json.JSONObject;
+import net.sf.json.JSONSerializer;
+import org.jenkinsci.Symbol;
+import org.jenkinsci.plugins.workflow.steps.FlowInterruptedException;
+import org.kohsuke.stapler.DataBoundConstructor;
+import org.kohsuke.stapler.DataBoundSetter;
+
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.UnsupportedEncodingException;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLEncoder;
+import java.util.Collections;
+import java.util.concurrent.TimeUnit;
+
+public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildStep {
+
+    // Required parameters
+    private final String product;
+    private final String subProduct;
+    private final String env;
+
+    // Optional parameters with default values
+    private int maxRetries = 5;       // How many times to poll before giving up
+    private String mode = "block";     // "block" or "warn"
+
+    // The target URL for the ArmorCode build validation endpoint
+    private String targetUrl = "https://app.armorcode.com/client/build";
+
+    // Optional setter so it can be configured from a Pipeline or via tests.
+    @DataBoundSetter
+    public void setTargetUrl(String targetUrl) {
+        this.targetUrl = targetUrl != null ? targetUrl : "https://app.armorcode.com/client/build";
+    }
+
+    /**
+     * Required constructor parameters.
+     *
+     * @param product   The ArmorCode product (group) ID.
+     * @param subProduct The ArmorCode sub-product (subgroup) ID.
+     * @param env  The environment (e.g. "Production", "Staging").
+     */
+    @DataBoundConstructor
+    public ArmorCodeReleaseGateBuilder(String product, String subProduct, String env) {
+        this.product = product;
+        this.subProduct = subProduct;
+        this.env = env;
+    }
+    /**
+     * Optional parameter: how many times to retry the validation check.
+     *
+     * @param maxRetries The maximum number of retries (default 30).
+     */
+    @DataBoundSetter
+    public void setMaxRetries(int maxRetries) {
+        this.maxRetries = maxRetries > 0 ? maxRetries : 5;
+    }
+
+    /**
+     * Optional parameter: "block" or "warn" mode.
+     * - "block" (default) fails the build on SLA failure.
+     * - "warn" marks the build UNSTABLE but continues.
+     *
+     * @param mode The validation mode ("block" or "warn").
+     */
+    @DataBoundSetter
+    public void setMode(String mode) {
+        this.mode = mode != null ? mode : "block";
+    }
+
+    // Getter methods for use in tests and UI binding
+    public String getProduct() {
+        return product;
+    }
+
+    public String getSubProduct() {
+        return subProduct;
+    }
+
+    public String getEnv() {
+        return env;
+    }
+
+    public int getMaxRetries() {
+        return maxRetries;
+    }
+
+    public String getMode() {
+        return mode;
+    }
+
+    public String getTargetUrl() {
+        return targetUrl;
+    }
+
+    /**
+     * Creates a detailed error message with links and context information
+     * Handles both severity-based and risk-based release gates
+     */
+    private String formatDetailedErrorMessage(Run<?,?> run, JSONObject responseJson) throws UnsupportedEncodingException {
+        StringBuilder message = new StringBuilder();
+        message.append("Group: ").append(product).append("\n");
+        message.append("Sub Group: ").append(subProduct).append("\n");
+        message.append("Environment: ").append(env).append("\n");
+
+        // Extract findings scope based on the release gate type
+        StringBuilder findingsScope = new StringBuilder();
+        boolean hasFindings = false;
+        boolean isSeverityBased = false;
+        boolean isRiskBased = false;
+
+        // Determine if severity-based by checking if any severity value is > 0
+        if (responseJson.has("severity") && responseJson.optJSONObject("severity") != null) {
+            JSONObject severity = responseJson.getJSONObject("severity");
+            if ((severity.has("Critical") && severity.getInt("Critical") > 0) ||
+                    (severity.has("High") && severity.getInt("High") > 0) ||
+                    (severity.has("Medium") && severity.getInt("Medium") > 0) ||
+                    (severity.has("Low") && severity.getInt("Low") > 0)) {
+                isSeverityBased = true;
+            }
+        } else if ((responseJson.has("severity.Critical") && responseJson.getInt("severity.Critical") > 0) ||
+                (responseJson.has("severity.High") && responseJson.getInt("severity.High") > 0) ||
+                (responseJson.has("severity.Medium") && responseJson.getInt("severity.Medium") > 0) ||
+                (responseJson.has("severity.Low") && responseJson.getInt("severity.Low") > 0)) {
+            isSeverityBased = true;
+        }
+
+        // Determine if risk-based by checking if any otherProperties value is > 0
+        if (responseJson.has("otherProperties") && responseJson.optJSONObject("otherProperties") != null) {
+            JSONObject riskProperties = responseJson.getJSONObject("otherProperties");
+            if ((riskProperties.has("VERY_POOR") && riskProperties.getInt("VERY_POOR") > 0) ||
+                    (riskProperties.has("POOR") && riskProperties.getInt("POOR") > 0) ||
+                    (riskProperties.has("FAIR") && riskProperties.getInt("FAIR") > 0) ||
+                    (riskProperties.has("GOOD") && riskProperties.getInt("GOOD") > 0)) {
+                isRiskBased = true;
+            }
+        } else if ((responseJson.has("otherProperties.VERY_POOR") && responseJson.getInt("otherProperties.VERY_POOR") > 0) ||
+                (responseJson.has("otherProperties.POOR") && responseJson.getInt("otherProperties.POOR") > 0) ||
+                (responseJson.has("otherProperties.FAIR") && responseJson.getInt("otherProperties.FAIR") > 0) ||
+                (responseJson.has("otherProperties.GOOD") && responseJson.getInt("otherProperties.GOOD") > 0)) {
+            isRiskBased = true;
+        }
+
+        // Process findings based on the determined type
+        if (isSeverityBased) {
+            // Process severity findings
+            if (responseJson.has("severity") && responseJson.optJSONObject("severity") != null) {
+                JSONObject severity = responseJson.getJSONObject("severity");
+
+                if (severity.has("Critical") && severity.getInt("Critical") > 0) {
+                    findingsScope.append(severity.getInt("Critical")).append(" Critical, ");
+                    hasFindings = true;
+                }
+                if (severity.has("High") && severity.getInt("High") > 0) {
+                    findingsScope.append(severity.getInt("High")).append(" High, ");
+                    hasFindings = true;
+                }
+                if (severity.has("Medium") && severity.getInt("Medium") > 0) {
+                    findingsScope.append(severity.getInt("Medium")).append(" Medium, ");
+                    hasFindings = true;
+                }
+                if (severity.has("Low") && severity.getInt("Low") > 0) {
+                    findingsScope.append(severity.getInt("Low")).append(" Low");
+                    hasFindings = true;
+                }
+            } else {
+                // Handle flattened severity format
+                if (responseJson.has("severity.Critical") && responseJson.getInt("severity.Critical") > 0) {
+                    findingsScope.append(responseJson.getInt("severity.Critical")).append(" Critical, ");
+                    hasFindings = true;
+                }
+                if (responseJson.has("severity.High") && responseJson.getInt("severity.High") > 0) {
+                    findingsScope.append(responseJson.getInt("severity.High")).append(" High, ");
+                    hasFindings = true;
+                }
+                if (responseJson.has("severity.Medium") && responseJson.getInt("severity.Medium") > 0) {
+                    findingsScope.append(responseJson.getInt("severity.Medium")).append(" Medium, ");
+                    hasFindings = true;
+                }
+                if (responseJson.has("severity.Low") && responseJson.getInt("severity.Low") > 0) {
+                    findingsScope.append(responseJson.getInt("severity.Low")).append(" Low");
+                    hasFindings = true;
+                }
+            }
+        } else if (isRiskBased) {
+            // Process risk findings
+            if (responseJson.has("otherProperties") && responseJson.optJSONObject("otherProperties") != null) {
+                JSONObject riskProperties = responseJson.getJSONObject("otherProperties");
+
+                if (riskProperties.has("VERY_POOR") && riskProperties.getInt("VERY_POOR") > 0) {
+                    findingsScope.append(riskProperties.getInt("VERY_POOR")).append(" Very Poor, ");
+                    hasFindings = true;
+                }
+                if (riskProperties.has("POOR") && riskProperties.getInt("POOR") > 0) {
+                    findingsScope.append(riskProperties.getInt("POOR")).append(" Poor, ");
+                    hasFindings = true;
+                }
+                if (riskProperties.has("FAIR") && riskProperties.getInt("FAIR") > 0) {
+                    findingsScope.append(riskProperties.getInt("FAIR")).append(" Fair, ");
+                    hasFindings = true;
+                }
+                if (riskProperties.has("GOOD") && riskProperties.getInt("GOOD") > 0) {
+                    findingsScope.append(riskProperties.getInt("GOOD")).append(" Good");
+                    hasFindings = true;
+                }
+            } else {
+                // Handle flattened otherProperties format
+                if (responseJson.has("otherProperties.VERY_POOR") && responseJson.getInt("otherProperties.VERY_POOR") > 0) {
+                    findingsScope.append(responseJson.getInt("otherProperties.VERY_POOR")).append(" Very Poor, ");
+                    hasFindings = true;
+                }
+                if (responseJson.has("otherProperties.POOR") && responseJson.getInt("otherProperties.POOR") > 0) {
+                    findingsScope.append(responseJson.getInt("otherProperties.POOR")).append(" Poor, ");
+                    hasFindings = true;
+                }
+                if (responseJson.has("otherProperties.FAIR") && responseJson.getInt("otherProperties.FAIR") > 0) {
+                    findingsScope.append(responseJson.getInt("otherProperties.FAIR")).append(" Fair, ");
+                    hasFindings = true;
+                }
+                if (responseJson.has("otherProperties.GOOD") && responseJson.getInt("otherProperties.GOOD") > 0) {
+                    findingsScope.append(responseJson.getInt("otherProperties.GOOD")).append(" Good");
+                    hasFindings = true;
+                }
+            }
+        }
+
+        // Trim trailing comma and space if present
+        String scopeString = findingsScope.toString();
+        if (scopeString.endsWith(", ")) {
+            scopeString = scopeString.substring(0, scopeString.length() - 2);
+        }
+
+        if (hasFindings) {
+            message.append("Findings Scope: ").append(scopeString).append("\n");
+        } else {
+            message.append("Findings Scope: No findings detected\n");
+        }
+
+        // Extract reason from response if available
+        String reason = "SLA check failed"; // Default reason
+        if (responseJson.has("failureReasonText")) {
+            // Get the value as an Object first
+            Object reasonObj = responseJson.get("failureReasonText");
+            // Only use it if it's not null and it's a non-empty string
+            if (reasonObj != null && !reasonObj.toString().equals("null") && !reasonObj.toString().isEmpty()) {
+                reason = reasonObj.toString();
+            }
+        }
+        message.append("Reason: ").append(reason).append("\n");
+
+        String buildNumber = String.valueOf(run.getNumber());
+        String jobName = run.getParent().getFullName(); // Get the job name
+        String baseDetailsLink = responseJson.optString("detailsLink",
+                responseJson.optString("link", "https://app.armorcode.com/client/integrations/jenkins"));
+        String detailsLink = baseDetailsLink + (baseDetailsLink.contains("?") ? "&" : "?") +
+                "filters=" + URLEncoder.encode("{\"buildNumber\":[\"" + buildNumber + "\"],\"jobName\":[\"" + jobName + "\"]}", "UTF-8");
+        message.append("For more details, please refer to: ").append(detailsLink);
+
+        return message.toString();
+    }
+
+    private boolean testMode = false;
+
+    @DataBoundSetter
+    public void setTestMode(boolean testMode) {
+        this.testMode = testMode;
+    }
+
+    public boolean getTestMode() {
+        return testMode;
+    }
+
+    // Add transient keyword to prevent serialization
+    private final transient JSONObject testResponseOverride = null;
+
+    private boolean isNullOrEmpty(String value) {
+        return value == null || value.trim().isEmpty();
+    }
+
+    private void validateSecurityPrerequisites(Run<?, ?> run, TaskListener listener, String token) throws InterruptedException {
+        // Strict parameter validation
+        if (isNullOrEmpty(product) || isNullOrEmpty(subProduct) || isNullOrEmpty(env)) {
+//            listener.getLogger().println("[SECURITY ERROR] Missing required security parameters");
+            run.setResult(Result.FAILURE);
+            throw new InterruptedException("Incomplete security configuration");
+        }
+
+        if (isNullOrEmpty(token)) {
+//            listener.getLogger().println("[SECURITY CRITICAL] No security token found");
+            run.setResult(Result.FAILURE);
+            throw new InterruptedException("Missing security authentication");
+        }
+    }
+
+//    private void saveGateInfoToProperties(Run<?, ?> run, TaskListener listener) {
+//        try {
+//            // Method 1: Add persistent parameters to the build
+//            run.addAction(new hudson.model.ParametersAction(
+//                    new hudson.model.StringParameterValue("ArmorCode.GateUsed", "true"),
+//                    new hudson.model.StringParameterValue("ArmorCode.Product", product),
+//                    new hudson.model.StringParameterValue("ArmorCode.SubProduct", subProduct),
+//                    new hudson.model.StringParameterValue("ArmorCode.Env", env),
+//                    new hudson.model.StringParameterValue("ArmorCode.GateResult", "PASSED")
+//            ));
+//
+//            // Method 2: Add a simple marker file to the build directory
+//            // In ArmorCodeReleaseGateBuilder.saveGateInfoToProperties
+//            try {
+//                FilePath marker = new FilePath(run.getRootDir()).child("armorcode-gate-used.txt");
+//                marker.write(String.format("product=%s\nsubProduct=%s\nenv=%s",
+//                        product, subProduct, env), "UTF-8");
+//
+//            } catch (Exception e) {
+//                e.printStackTrace(listener.getLogger());
+//            }
+//
+//            // Force save to ensure it's all persisted
+//            run.save();
+//
+//        } catch (Exception e) {
+//            // Just log, don't fail the build
+//            e.printStackTrace(listener.getLogger());
+//        }
+//    }
+
+    /**
+     * Determines how to handle a FAILED status depending on the mode.
+     */
+    private void handleFailureMode(Run<?, ?> run, TaskListener listener) throws InterruptedException, AbortException {
+        if ("block".equalsIgnoreCase(mode)) {
+            listener.getLogger().println("[BLOCK] SLA check FAILED => Terminating build with failure.");
+            run.setResult(Result.FAILURE);
+
+            CauseOfInterruption.UserInterruption cause = new CauseOfInterruption.UserInterruption("ArmorCode release gate failed: Security check did not pass");
+            run.addAction(new InterruptedBuildAction(Collections.singleton(cause)));
+
+            throw new QuitException("__ARMORCODE_ENFORCE_FAILURE__");
+        }
+        else if ("warn".equalsIgnoreCase(mode)) {
+            listener.getLogger().println("[WARN] SLA check FAILED but 'warn' mode is active => Marking build as UNSTABLE and continuing...");
+            run.setResult(Result.UNSTABLE);
+        } else if (testMode) {
+            listener.getLogger().println("[TEST MODE] Maximum retries reached; forcing build success for testing.");
+            run.setResult(Result.SUCCESS);
+        } else {
+            listener.getLogger().println("[BLOCK] Release gate is running in BLOCK mode => Terminating build with failure.");
+
+            // Force ABORTED result which typically can't be caught/overridden in pipelines
+            run.setResult(Result.FAILURE);
+
+            // Throw the error that will terminate execution
+            CauseOfInterruption.UserInterruption cause = new CauseOfInterruption.UserInterruption("ArmorCode release gate failed: Security check did not pass");
+            throw new FlowInterruptedException(Result.FAILURE, cause);
+        }
+    }
+
+    /**
+     * Executes the release gate check. Polls ArmorCode up to maxRetries times,
+     * parsing the status each time. Depending on the mode, the build either fails
+     * or continues if an SLA violation is found.
+     */
+    @Override
+    public void perform(@NonNull Run<?, ?> run, @NonNull FilePath workspace, @NonNull Launcher launcher, @NonNull TaskListener listener)
+            throws InterruptedException, Error {
+
+        // Gather Jenkins context info
+        final String buildNumber = String.valueOf(run.getNumber());
+        final String jobName = run.getParent().getName();
+
+        // Get global config if available
+        String apiBaseUrl = targetUrl;
+        ArmorCodeGlobalConfig globalConfig = ArmorCodeGlobalConfig.get();
+        if (globalConfig != null && apiBaseUrl.equals("https://app.armorcode.com/client/build")) {
+            // Only use global config if user hasn't explicitly set a different URL
+            apiBaseUrl = globalConfig.getBaseUrl();
+        }
+
+        final String token = CredentialsUtils.getArmorCodeToken(run);
+        validateSecurityPrerequisites(run, listener, token);
+
+        String jobUrl = run.getParent().getAbsoluteUrl();
+        if (jobUrl == null && jobUrl.isEmpty()) {
+            // Only use fallback if Jenkins API fails
+            String jenkinsRootUrl = jenkins.model.JenkinsLocationConfiguration.get().getUrl();
+            if (jenkinsRootUrl != null && !jenkinsRootUrl.isEmpty()) {
+                jobUrl = jenkinsRootUrl + "/job/" + jobName + "/";
+            } else {
+                jobUrl ="http://localhost:8080/job/" + jobName + "/";
+            }
+        }
+
+
+        // Log initial context
+        listener.getLogger().println("=== Starting ArmorCode Release Gate Check ===");
+        listener.getLogger().printf(
+                "product=%s, subProduct=%s, env=%s, maxRetries=%d, mode=%s%n",
+                product, subProduct, env, maxRetries, mode
+        );
+
+        // Poll up to maxRetries times
+        for (int attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                // Process response - either from test override or from actual API call
+                JSONObject json;
+                    // Make the HTTP POST request and parse the response
+                String responseStr = postArmorCodeRequest(listener,token, buildNumber, jobName, attempt, maxRetries, apiBaseUrl, jobUrl);
+                json = (JSONObject) JSONSerializer.toJSON(responseStr);
+                String status = json.optString("status", "UNKNOWN");
+                listener.getLogger().println("=== ArmorCode Release Gate ===");
+                listener.getLogger().println("Status: " + status);
+
+                if ("HOLD".equalsIgnoreCase(status)) {
+                    // On HOLD => wait 20 seconds, then retry
+                    listener.getLogger().println("[INFO] SLA is on HOLD. Sleeping 20s...");
+                    listener.getLogger().println("[INFO] Sleeping 20 seconds before trying again. You can temporarily release the build from ArmorCode console");
+                    TimeUnit.SECONDS.sleep(20);
+                } else if ("FAILED".equalsIgnoreCase(status)) {
+                    // SLA failure => provide detailed error with links
+                    String detailedError = formatDetailedErrorMessage(run,json);
+                    listener.getLogger().println(detailedError);
+//                    saveGateInfoToProperties(run, listener);
+                    TimeUnit.SECONDS.sleep(20);
+                    handleFailureMode(run, listener);
+                    if (!"warn".equalsIgnoreCase(mode)) {
+                        return;
+                    } else {
+                        // In warn mode, just break the retry loop and continue pipeline execution
+                        break;
+                    }
+                } else {
+                    // SUCCESS or RELEASE or other statuses => pass and break out
+                    listener.getLogger().println("[INFO] ArmorCode check passed! Proceeding...");
+//                    saveGateInfoToProperties(run, listener);
+                    TimeUnit.SECONDS.sleep(20);
+                    return;
+                }
+            } catch (QuitException | FlowInterruptedException e) {
+                // Rethrow to allow Jenkins to handle the interruption
+                throw e;
+            } catch (AbortException e) {
+                run.setResult(Result.FAILURE);
+                throw new FlowInterruptedException(Result.FAILURE, new CauseOfInterruption.UserInterruption("ArmorCode release gate failed: Security check did not pass"));
+            } catch (Exception e) {
+                // Special handling for our enforcement signal
+                if (e.getMessage() != null && e.getMessage().equals("__ARMORCODE_ENFORCE_FAILURE__")) {
+                    throw new RuntimeException("ArmorCode release gate failed: Security check did not pass");
+                }
+
+                listener.getLogger().println("[ERROR] ArmorCode request failed: " + e.getMessage());
+
+                // If we've tried all retries, fail the build
+                if (attempt == maxRetries) {
+                    run.setResult(Result.FAILURE);
+                    throw new InterruptedException("ArmorCode request error after maximum retries.");
+                }
+
+                // Otherwise wait and retry
+                listener.getLogger().println("Waiting 20s before retry...");
+                TimeUnit.SECONDS.sleep(20);
+            }
+        }
+    }
+
+    /**
+     * Sends a POST request to ArmorCode's build validation endpoint
+     * with the given parameters, then returns the raw JSON response.
+     */
+    protected String postArmorCodeRequest(@NonNull TaskListener listener, String token, String buildNumber, String jobName, int current, int end, String apiUrl, String jobUrl)
+            throws Exception {
+
+        // Format current and end as strings to match the curl command exactly
+        final String payload = String.format(
+                "{ \"env\": \"%s\", \"product\": \"%s\", \"subProduct\": \"%s\", " +
+                        "\"buildNumber\": \"%s\", \"jobName\": \"%s\", \"current\": \"%s\", \"end\": \"%s\" , \"jobURL\": \"%s\"}",
+                env, product, subProduct, buildNumber, jobName, String.valueOf(current), String.valueOf(end), jobUrl
+        );
+
+        // Log the request details for debugging
+        System.out.println("POST URL: " + apiUrl);
+        System.out.println("Payload: " + payload);
+
+        // Configure HTTP connection
+        String uri = apiUrl + "/client/build";
+        URL url = new URL(uri);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Authorization", "Bearer " + token);
+        conn.setDoOutput(true);
+
+        // Set character encoding explicitly
+        conn.setRequestProperty("Accept-Charset", "UTF-8");
+
+        String curlCommand = "curl --location '" + url + "\\\n" +
+                "--header 'Content-Type: application/json' \\\n" +
+                "--header 'Authorization: Bearer " + token.substring(0, 5) + "...' \\\n" +
+                "--header 'Accept-Charset: UTF-8' \\\n" +
+                "--data '" + payload.toString() + "'";
+
+        // Log the curl command to Jenkins console using the listener
+//        listener.getLogger().println("[ArmorCode] Equivalent curl command:");
+//        listener.getLogger().println(curlCommand);
+
+        // Write payload with explicit UTF-8 encoding
+        conn.getOutputStream().write(payload.getBytes("UTF-8"));
+        conn.getOutputStream().flush();
+
+        // Check response code before reading
+        int responseCode = conn.getResponseCode();
+        System.out.println("Response code: " + responseCode);
+
+        if (responseCode >= 200 && responseCode < 300) {
+            // Success case
+            try (BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream(), "UTF-8"))) {
+                StringBuilder sb = new StringBuilder();
+                String line;
+                while ((line = in.readLine()) != null) {
+                    sb.append(line);
+                }
+                return sb.toString();
+            }
+        } else {
+            // Error case - extract and log the error response
+            StringBuilder errorResponse = new StringBuilder();
+            try (BufferedReader errorReader = new BufferedReader(new InputStreamReader(conn.getErrorStream(), "UTF-8"))) {
+                String line;
+                while ((line = errorReader.readLine()) != null) {
+                    errorResponse.append(line);
+                }
+            } catch (Exception ex) {
+                errorResponse.append("Failed to read error stream: ").append(ex.getMessage());
+            }
+
+            System.out.println("Error response: " + errorResponse.toString());
+            throw new IOException("Server returned HTTP response code: " + responseCode +
+                    " for URL: " + apiUrl + " with message: " + errorResponse);
+        }
+    }
+
+    @Override
+    public BuildStepMonitor getRequiredMonitorService() {
+        return BuildStepMonitor.NONE;
+    }
+
+    /**
+     * Descriptor that tells Jenkins how to display and instantiate this step.
+     */
+    @Extension
+    @Symbol("armorcodeReleaseGate")
+    public static class DescriptorImpl extends BuildStepDescriptor<Builder> {
+
+        @Override
+        public boolean isApplicable(Class jobType) {
+            return true;
+        }
+
+        @NonNull
+        @Override
+        public String getDisplayName() {
+            return "ArmorCode Release Gate";
+        }
+
+        @Override
+        public String getId() {
+            return "armorcodeReleaseGate";
+        }
+    }
+}

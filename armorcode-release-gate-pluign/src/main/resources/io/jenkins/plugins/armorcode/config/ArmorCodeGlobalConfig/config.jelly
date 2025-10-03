@@ -1,0 +1,65 @@
+<?jelly escape-by-default='true'?>
+<j:jelly xmlns:j="jelly:core" xmlns:st="jelly:stapler" xmlns:d="jelly:define" xmlns:l="/lib/layout" xmlns:t="/lib/hudson" xmlns:f="/lib/form">
+    <f:section title="ArmorCode Configuration">
+        <f:entry title="ArmorCode Base URL" field="baseUrl"
+                 description="Base URL for the ArmorCode instance (e.g., https://app.armorcode.com)">
+            <f:textbox />
+        </f:entry>
+
+        <f:entry title="Enable Discovery" field="monitorBuilds">
+            <f:checkbox default="false" onclick="toggleArmorCodeSettings(this.checked)" />
+        </f:entry>
+
+        <!-- Discovery settings div, initially hidden -->
+        <div id="armorcode-discovery-settings" style="display: none;">
+            <f:entry title="Discovery Schedule" field="cronExpression"
+                     description="When to send build data (Jenkins cron syntax). Must not be more frequent than once per hour.">
+                <f:textbox default="H H * * 0" />
+            </f:entry>
+
+            <f:entry>
+                <div class="alert alert-info">
+                    <p>
+                        <b>Cron Examples:</b><br/>
+                        Every week on Sunday at midnight: <code>H H * * 0</code> (default)<br/>
+                        Every day at midnight: <code>H 0 * * *</code><br/>
+                        Every 6 hours: <code>H H/6 * * *</code><br/>
+                        Every Monday at 9am: <code>H 9 * * 1</code><br/>
+                        At minute 0(Every hour): <code>0 * * * *</code> (minimum)<br/>
+                        <span style="color:red;">⚠️ Too frequent (not allowed): </span> <code>*/5 * * * *</code>
+                    </p>
+                </div>
+            </f:entry>
+
+            <f:entry title="Include Jobs Pattern" field="includeJobsPattern"
+                     description="Regular expression for jobs to include (e.g., 'production.*'). Default is all jobs.">
+                <f:textbox default=".*" />
+            </f:entry>
+
+            <f:entry title="Exclude Jobs Pattern" field="excludeJobsPattern"
+                     description="Regular expression for jobs to exclude (e.g., 'test.*'). Takes precedence over includes.">
+                <f:textbox />
+            </f:entry>
+        </div>
+
+    </f:section>
+
+    <script>
+        // Function to toggle the visibility of discovery settings
+        function toggleArmorCodeSettings(show) {
+            const settingsDiv = document.getElementById('armorcode-discovery-settings');
+            if (settingsDiv) {
+                settingsDiv.style.display = show ? 'block' : 'none';
+            }
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Get the actual value from the model, not just the default attribute
+            const checkbox = document.querySelector('input[name="_.monitorBuilds"]');
+            if (checkbox) {
+                toggleArmorCodeSettings(checkbox.checked);
+            }
+        });
+    </script>
+</j:jelly>

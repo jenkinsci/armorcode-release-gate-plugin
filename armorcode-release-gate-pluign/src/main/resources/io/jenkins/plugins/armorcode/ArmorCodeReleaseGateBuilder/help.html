@@ -1,0 +1,15 @@
+<div>
+    <p>ArmorCode Release Gate ensures that code changes meet security standards before they are deployed.</p>
+    <p>When this build step runs, it will:</p>
+    <ol>
+        <li>Connect to ArmorCode and request validation of your build against security policies</li>
+        <li>Wait for validation to complete (polling with the specified retry interval)</li>
+        <li>Either block the build or issue a warning based on the validation results and configured mode</li>
+    </ol>
+    <p>For this to work properly, you need to:</p>
+    <ol>
+        <li>Configure the ArmorCode API token in Jenkins credentials with ID "ARMORCODE_TOKEN"</li>
+        <li>Set the correct product and sub-product IDs from your ArmorCode account</li>
+        <li>Configure global settings under "Manage Jenkins" > "System" > "ArmorCode Configuration"</li>
+    </ol>
+</div>

@@ -1,0 +1,121 @@
+<!--<?xml version="1.0" encoding="UTF-8"?>-->
+<!--<?jelly escape-by-default='true'?>-->
+<!--<j:jelly xmlns:j="jelly:core" xmlns:f="/lib/form" xmlns:st="jelly:stapler">-->
+
+<!--    &lt;!&ndash;-->
+<!--      This Jelly file defines the Freestyle config UI for-->
+<!--      ArmorCodeReleaseGateBuilder fields.-->
+<!--    &ndash;&gt;-->
+
+<!--    <f:section title="ArmorCode Release Gate">-->
+<!--        <f:entry title="Group" field="product"-->
+<!--                 description="ArmorCode group (product) identifier">-->
+<!--            <f:textbox />-->
+<!--        </f:entry>-->
+
+<!--        <f:entry title="Sub-Group" field="subProduct"-->
+<!--                 description="ArmorCode sub-group (sub-product) identifier">-->
+<!--            <f:textbox />-->
+<!--        </f:entry>-->
+
+<!--        <f:entry title="Environment" field="env"-->
+<!--                 description="Deployment environment (e.g., Production, Staging, QA)">-->
+<!--            <f:textbox default="Production"/>-->
+<!--        </f:entry>-->
+
+<!--        <f:advanced>-->
+<!--            <f:entry title="Max Retries" field="maxRetries"-->
+<!--                     description="Maximum number of times to check status before giving up">-->
+<!--                <f:number default="5" min="1" max="30"/>-->
+<!--            </f:entry>-->
+
+<!--            <f:entry title="Mode" field="mode"-->
+<!--                     description="Behavior when security validation fails">-->
+<!--                <f:dropdownList name="mode">-->
+<!--                    <f:option value="block" selected="${instance.mode == 'block' || instance.mode == null}">-->
+<!--                        Block build on failure-->
+<!--                    </f:option>-->
+<!--                    <f:option value="warn" selected="${instance.mode == 'warn'}">-->
+<!--                        Mark as unstable but continue-->
+<!--                    </f:option>-->
+<!--                </f:dropdownList>-->
+<!--            </f:entry>-->
+
+<!--            <f:entry title="Target URL" field="targetUrl"-->
+<!--                     description="Override ArmorCode API URL (leave empty to use global config)">-->
+<!--                <f:textbox placeholder="https://app.armorcode.com/client/build"/>-->
+<!--            </f:entry>-->
+<!--        </f:advanced>-->
+
+<!--        <f:block>-->
+<!--            <div class="info-box">-->
+<!--                <p>-->
+<!--                    <strong>Pipeline usage:</strong>-->
+<!--                </p>-->
+<!--                <p>-->
+<!--                    <strong>Block mode (default):</strong><br/>-->
+<!--                    <code>armorcodeReleaseGate(product: '12345', subProduct: '67890', env: 'Production', mode: 'block')</code>-->
+<!--                </p>-->
+<!--                <p>-->
+<!--                    <strong>Warn mode:</strong><br/>-->
+<!--                    <code>armorcodeReleaseGate(product: '12345', subProduct: '67890', env: 'Production', mode: 'warn')</code>-->
+<!--                </p>-->
+<!--                <p>Visit the <a href="https://support.armorcode.com" target="_blank">ArmorCode documentation</a> for more information</p>-->
+<!--            </div>-->
+<!--        </f:block>-->
+<!--    </f:section>-->
+
+<!--</j:jelly>-->
+
+<j:jelly xmlns:j="jelly:core" xmlns:f="/lib/form" xmlns:st="jelly:stapler">
+    <f:section title="ArmorCode Release Gate">
+
+        <f:entry title="Group" field="product" description="ArmorCode group (product) identifier">
+            <f:textbox />
+        </f:entry>
+
+        <f:entry title="Sub-Group" field="subProduct" description="ArmorCode sub-group (sub-product) identifier">
+            <f:textbox />
+        </f:entry>
+
+        <f:entry title="Environment" field="env" description="Deployment environment (e.g., Production, Staging, QA)">
+            <f:textbox default="Production"/>
+        </f:entry>
+
+        <f:advanced>
+            <f:entry title="Max Retries" field="maxRetries" description="Maximum number of times to check status before giving up">
+                <f:textbox />
+            </f:entry>
+
+            <f:entry title="Mode" field="mode" description="Behavior when security validation fails">
+                <select name="mode" class="setting-input">
+                    <option value="block">Block build on failure</option>
+                    <option value="warn">Warn but continue build</option>
+                </select>
+            </f:entry>
+
+            <f:entry title="Target URL" field="targetUrl" description="Override ArmorCode API URL (leave empty to use global config)">
+                <f:textbox placeholder="https://app.armorcode.com/client/build"/>
+            </f:entry>
+
+        </f:advanced>
+                <f:block>
+                    <div class="info-box">
+                        <p>
+                            <strong>Pipeline usage:</strong>
+                        </p>
+                        <p>
+                            <strong>Block mode (default):</strong><br/>
+                            <code>armorcodeReleaseGate(product: '12345', subProduct: '67890', env: 'Production')</code>
+                        </p>
+                        <p>
+                            <strong>Warn mode:</strong><br/>
+                            <code>armorcodeReleaseGate(product: '12345', subProduct: '67890', env: 'Production', mode: 'warn')</code>
+                        </p>
+                        <p>Visit the <a href="https://support.armorcode.com" target="_blank">ArmorCode documentation</a> for more information</p>
+                    </div>
+                </f:block>
+
+    </f:section>
+
+</j:jelly>
