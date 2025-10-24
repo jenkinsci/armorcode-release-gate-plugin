@@ -20,7 +20,9 @@ import java.io.UnsupportedEncodingException;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Collections;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import jenkins.model.CauseOfInterruption;
 import jenkins.model.InterruptedBuildAction;
@@ -288,7 +290,7 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
                 "detailsLink", responseJson.optString("link", "https://app.armorcode.com/client/integrations/jenkins"));
         String detailsLink = baseDetailsLink + (baseDetailsLink.contains("?") ? "&" : "?") + "filters="
                 + URLEncoder.encode(
-                        "{\"buildNumber\":[\"" + buildNumber + "\"],\"jobName\":[\"" + jobName + "\"]}", "UTF-8");
+                        "{\"buildNumber\":[\"" + buildNumber + "\"],\"jobName\":[\"" + jobName + "\"]}", StandardCharsets.UTF_8);
         message.append("For more details, please refer to: ").append(detailsLink);
 
         return message.toString();
@@ -388,7 +390,7 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
         // Get global config if available
         String apiBaseUrl = targetUrl;
         ArmorCodeGlobalConfig globalConfig = ArmorCodeGlobalConfig.get();
-        if (globalConfig != null && apiBaseUrl.equals("https://app.armorcode.com/client/build")) {
+        if (globalConfig != null && Objects.equals(apiBaseUrl, "https://app.armorcode.com/client/build")) {
             // Only use global config if user hasn't explicitly set a different URL
             apiBaseUrl = globalConfig.getBaseUrl();
         }
@@ -506,14 +508,14 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
             subProductsJsonArray = "[]";
         } else if (subProducts instanceof java.util.List) {
             subProductsJsonArray =
-                    new net.sf.json.JSONArray().element(subProducts).toString();
+                    net.sf.json.JSONArray.fromObject(subProducts).toString();
         } else {
             java.util.List<String> subProductList = java.util.Arrays.stream(((String) subProducts).split("\\r?\\n"))
                     .map(String::trim)
                     .filter(s -> !s.isEmpty())
                     .collect(java.util.stream.Collectors.toList());
             subProductsJsonArray =
-                    new net.sf.json.JSONArray().element(subProductList).toString();
+                    net.sf.json.JSONArray.fromObject(subProductList).toString();
         }
 
         final String payload = String.format(
@@ -545,7 +547,7 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
         conn.setRequestProperty("Accept-Charset", "UTF-8");
 
         // Write payload with explicit UTF-8 encoding
-        conn.getOutputStream().write(payload.getBytes("UTF-8"));
+        conn.getOutputStream().write(payload.getBytes(StandardCharsets.UTF_8));
         conn.getOutputStream().flush();
 
         // Check response code before reading
@@ -554,7 +556,7 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
 
         if (responseCode >= 200 && responseCode < 300) {
             // Success case
-            try (BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream(), "UTF-8"))) {
+            try (BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
                 StringBuilder sb = new StringBuilder();
                 String line;
                 while ((line = in.readLine()) != null) {
@@ -566,7 +568,7 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
             // Error case - extract and log the error response
             StringBuilder errorResponse = new StringBuilder();
             try (BufferedReader errorReader =
-                    new BufferedReader(new InputStreamReader(conn.getErrorStream(), "UTF-8"))) {
+                    new BufferedReader(new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = errorReader.readLine()) != null) {
                     errorResponse.append(line);

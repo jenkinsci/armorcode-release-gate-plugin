@@ -231,7 +231,7 @@ public class ArmorCodeGlobalConfig extends GlobalConfiguration {
         // H/N means "every N minutes/hours/etc.". If N < 60 in minutes field, it runs multiple times per hour
         if (minutes.matches("H/\\d+")) {
             int step = Integer.parseInt(minutes.substring(2));
-            if (step < 60) return true;
+            return step < 60;
         }
 
         return false;

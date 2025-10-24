@@ -201,7 +201,7 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
         for (Job<?, ?> job : Jenkins.get().getAllItems(Job.class)) {
             String jobName = job.getFullName();
 
-            // Apply include/exclude patterns
+            // Apply to include/exclude patterns
             if (!shouldMonitorJob(jobName, includePattern, excludePattern)) {
                 continue;
             }
@@ -407,7 +407,7 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
                         return true;
                     }
 
-                    // For multibranch pipelines, the Jenkinsfile might be in source control
+                    // For multibranch pipelines, the Jenkins file might be in source control
                     // and not directly accessible, so we need more heuristics
                     if (parentJob.getClass().getName().contains("MultiBranchProject")) {
                         // Check if other branches in the same project use ArmorCode
@@ -537,8 +537,6 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
                     LOGGER.log(Level.WARNING, "Could not read error response", ex);
                 }
 
-                //                listener.error("[ArmorCode] Batch send failed with HTTP " + responseCode + ": " +
-                // errorResponse);
                 LOGGER.log(Level.WARNING, "Batch send failed with HTTP " + responseCode + ": " + errorResponse);
                 return false;
             }
