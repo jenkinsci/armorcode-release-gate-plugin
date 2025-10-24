@@ -1,12 +1,12 @@
 package io.jenkins.plugins.armorcode;
 
+import static org.junit.Assert.*;
+
 import hudson.util.FormValidation;
 import io.jenkins.plugins.armorcode.config.ArmorCodeGlobalConfig;
 import org.junit.Rule;
 import org.junit.Test;
 import org.jvnet.hudson.test.JenkinsRule;
-
-import static org.junit.Assert.*;
 
 /**
  * Test cases for ArmorCode global configuration.

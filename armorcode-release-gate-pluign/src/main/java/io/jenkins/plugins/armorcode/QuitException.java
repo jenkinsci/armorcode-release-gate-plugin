@@ -5,7 +5,7 @@ package io.jenkins.plugins.armorcode;
  * to enforce release gates. It can operate in either "warn" mode (marking
  * the build as UNSTABLE if validation fails) or "block" mode (failing the build).
  */
-public class QuitException extends Error {
+public class QuitException extends RuntimeException {
     public QuitException(String message) {
         super(message);
     }

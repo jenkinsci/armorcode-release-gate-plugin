@@ -3,14 +3,12 @@ package io.jenkins.plugins.armorcode;
 import hudson.Extension;
 import hudson.FilePath;
 import hudson.model.AsyncPeriodicWork;
-import hudson.model.TaskListener;
 import hudson.model.Job;
 import hudson.model.Run;
+import hudson.model.TaskListener;
 import hudson.scheduler.CronTab;
 import io.jenkins.plugins.armorcode.config.ArmorCodeGlobalConfig;
 import io.jenkins.plugins.armorcode.credentials.CredentialsUtils;
-import jenkins.model.Jenkins;
-
 import java.io.*;
 import java.lang.reflect.InvocationTargetException;
 import java.net.HttpURLConnection;
@@ -24,7 +22,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-
+import jenkins.model.Jenkins;
 import jenkins.util.Timer;
 import net.sf.json.JSONObject;
 
@@ -37,6 +35,7 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
 
     // Track the scheduled task to prevent duplicates
     private static ScheduledFuture<?> currentScheduledTask = null;
+    private static final Object TASK_SCHEDULE_LOCK = new Object();
 
     /**
      * Constructor with name for the background task.
@@ -48,27 +47,30 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
     /**
      * Force reschedule of the task with proper cleanup of previous schedule.
      */
-    public synchronized void reschedule() {
+    public void reschedule() {
         LOGGER.info("Forcing reschedule of ArmorCode job discovery");
-
-        // Cancel any existing scheduled task first
-        if (currentScheduledTask != null && !currentScheduledTask.isDone()) {
-            LOGGER.info("Cancelling previous scheduled task");
-            currentScheduledTask.cancel(false);
-            currentScheduledTask = null;
-        }
 
         // Get current interval from config
         long interval = getRecurrencePeriod();
 
-        // Schedule a new task
-        currentScheduledTask = Timer.get().scheduleWithFixedDelay(this, 0, interval, TimeUnit.MILLISECONDS);
+        // Use a static lock to protect the static field
+        synchronized (TASK_SCHEDULE_LOCK) {
+            // Cancel any existing scheduled task first
+            if (currentScheduledTask != null && !currentScheduledTask.isDone()) {
+                LOGGER.info("Cancelling previous scheduled task");
+                currentScheduledTask.cancel(false);
+                currentScheduledTask = null;
+            }
+
+            // Schedule a new task
+            currentScheduledTask = Timer.get().scheduleWithFixedDelay(this, 0, interval, TimeUnit.MILLISECONDS);
+        } // End of synchronized block
 
         // Log next scheduled run time
         Calendar nextRun = Calendar.getInstance();
         nextRun.setTimeInMillis(System.currentTimeMillis() + interval);
-        LOGGER.info("Next ArmorCode discovery run scheduled at " + nextRun.getTime() +
-                " with interval " + (interval / 1000) + " seconds");
+        LOGGER.info("Next ArmorCode discovery run scheduled at " + nextRun.getTime() + " with interval "
+                + (interval / 1000) + " seconds");
     }
 
     /**
@@ -109,13 +111,15 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
             Calendar nextRun = Calendar.getInstance();
             nextRun.setTimeInMillis(System.currentTimeMillis() + interval);
 
-            LOGGER.info("Next ArmorCode discovery run scheduled at " +
-                    nextRun.getTime() + " based on cron: " + cronExpression);
+            LOGGER.info("Next ArmorCode discovery run scheduled at " + nextRun.getTime() + " based on cron: "
+                    + cronExpression);
 
             return interval;
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error calculating schedule from cron expression: " +
-                    cronExpression + ". Defaulting to hourly.", e);
+            LOGGER.log(
+                    Level.WARNING,
+                    "Error calculating schedule from cron expression: " + cronExpression + ". Defaulting to hourly.",
+                    e);
             return TimeUnit.HOURS.toMillis(1);
         }
     }
@@ -133,10 +137,7 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
         cronTab.ceil(next); // Get next execution time
 
         // Calculate time difference in milliseconds - the minimum is 60 seconds
-        return Math.max(
-                TimeUnit.SECONDS.toMillis(60),
-                next.getTimeInMillis() - now.getTimeInMillis()
-        );
+        return Math.max(TimeUnit.SECONDS.toMillis(60), next.getTimeInMillis() - now.getTimeInMillis());
     }
 
     /**
@@ -144,8 +145,6 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
      */
     @Override
     protected void execute(TaskListener listener) {
-        long startTime = System.currentTimeMillis();
-//        listener.getLogger().println("[ArmorCode] Starting job discovery scan at " + new Date());
         LOGGER.info("[ArmorCode] Starting job discovery scan at " + new Date());
 
         try {
@@ -153,7 +152,6 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
 
             // Skip if discovery is disabled
             if (!config.isMonitorBuilds()) {
-//                listener.getLogger().println("[ArmorCode] Job discovery is disabled in configuration");
                 LOGGER.info("[ArmorCode] Job discovery is disabled in configuration");
                 return;
             }
@@ -161,61 +159,43 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
             // Get ArmorCode token
             final String token = CredentialsUtils.getSystemToken();
             if (token == null) {
-//                listener.error("[ArmorCode] No ArmorCode token found - skipping job discovery");
                 LOGGER.warning("[ArmorCode] No ArmorCode token found - skipping job discovery");
                 return;
             }
-
-//            listener.getLogger().println("[ArmorCode] Token retrieved successfully (length: " + token.length() + ")");
 
             // Collect job data
             List<JSONObject> jobsData = collectJobsData(config, listener);
 
             if (jobsData.isEmpty()) {
-//                listener.getLogger().println("[ArmorCode] No matching jobs found during discovery");
                 LOGGER.info("[ArmorCode] No matching jobs found during discovery");
                 return;
             }
-
-//            listener.getLogger().println("[ArmorCode] Found " + jobsData.size() + " jobs to report");
-//            LOGGER.info("[ArmorCode] Found " + jobsData.size() + " jobs to report");
 
             // Send data to ArmorCode in batches
             boolean success = sendJobsDataInBatches(config, token, jobsData, listener);
 
             if (success) {
-//                listener.getLogger().println("[ArmorCode] Successfully sent job discovery data");
                 LOGGER.info("[ArmorCode] Successfully sent job discovery data");
             } else {
                 LOGGER.log(Level.WARNING, "Failed to send job discovery data");
-//                listener.error("[ArmorCode] Failed to send some job discovery data");
             }
 
             // Log execution time
-            long executionTime = System.currentTimeMillis() - startTime;
-//            listener.getLogger().println("[ArmorCode] Job discovery completed in " + executionTime + "ms");
-//            LOGGER.info("[ArmorCode] Job discovery completed in " + executionTime + "ms");
-
         } catch (Exception e) {
             e.printStackTrace(listener.error("[ArmorCode] Error during job discovery"));
-//            LOGGER.log(Level.SEVERE, "Error during ArmorCode job discovery", e);
         }
     }
 
     /**
      * Collect data about Jenkins jobs.
      */
-    private List<JSONObject> collectJobsData(ArmorCodeGlobalConfig config, TaskListener listener) throws IOException, InvocationTargetException, IllegalAccessException {
+    private List<JSONObject> collectJobsData(ArmorCodeGlobalConfig config, TaskListener listener)
+            throws IOException, InvocationTargetException, IllegalAccessException {
         List<JSONObject> jobsData = new ArrayList<>();
 
         // Get the include/exclude patterns
         String includePattern = config.getIncludeJobsPattern();
         String excludePattern = config.getExcludeJobsPattern();
-
-//        listener.getLogger().println("[ArmorCode] Looking for jobs with include pattern: '" +
-//                includePattern + "', exclude pattern: '" + excludePattern + "'");
-//        LOGGER.info("[ArmorCode] Looking for jobs with include pattern: '" +
-//                includePattern + "', exclude pattern: '" + excludePattern + "'");
 
         // Get all jobs from Jenkins
         for (Job<?, ?> job : Jenkins.get().getAllItems(Job.class)) {
@@ -240,33 +220,20 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
 
             jobData.put("buildTool", "JENKINS");
 
-            // Add environment information
-//            try {
-//                String nodeName = lastBuild.getExecutor() != null ?
-//                        lastBuild.getExecutor().getOwner().getName() : "master";
-//                jobData.put("buildNode", nodeName);
-//            } catch (Exception e) {
-////                listener.getLogger().println("[ArmorCode] Could not get node info for job '" +
-////                        jobName + "': " + e.getMessage());
-//                LOGGER.log(Level.WARNING, "Could not get node info for job '" + jobName + "'", e);
-//            }
-
             // Add job URL
             String jobUrl = job.getAbsoluteUrl();
             if (jobUrl != null && !jobUrl.isEmpty()) {
                 jobData.put("jobURL", jobUrl);
             } else {
                 // Fallback
-                String jenkinsRootUrl = jenkins.model.JenkinsLocationConfiguration.get().getUrl();
+                String jenkinsRootUrl =
+                        jenkins.model.JenkinsLocationConfiguration.get().getUrl();
                 if (jenkinsRootUrl != null && !jenkinsRootUrl.isEmpty()) {
                     jobData.put("jobURL", jenkinsRootUrl + "job/" + jobName + "/");
                 } else {
                     jobData.put("jobURL", "http://localhost:8080/job/" + jobName + "/");
                 }
             }
-
-            // Add direct URL to the last build
-//            jobData.put("lastBuildURL", jobUrl + lastBuild.getNumber() + "/");
 
             Boolean isJobMapped = isUsingArmorCodePlugin(job);
 
@@ -277,7 +244,6 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
 
         return jobsData;
     }
-
 
     /*
      * Enhanced isUsingArmorCodePlugin method with better multibranch pipeline detection.
@@ -314,12 +280,10 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
                     }
                 } catch (NoSuchMethodException e) {
                     // Method doesn't exist, continue with other checks
-//                    LOGGER.log(Level.FINE, "No getBuildersList method for " + job.getFullName(), e);
                 }
             }
         } catch (Exception e) {
-            // Log and continue with other methods
-//            LOGGER.log(Level.FINE, "Error checking freestyle builders for " + job.getFullName(), e);
+            LOGGER.log(Level.WARNING, "Error while inspecting job " + job.getFullName(), e);
         }
 
         // Method 2: Check for ArmorCode parameters in last build
@@ -342,12 +306,12 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
                         return true;
                     }
                 } catch (Exception e) {
-//                    LOGGER.log(Level.FINE, "Error checking for marker file in " + job.getFullName(), e);
+                    LOGGER.log(Level.FINE, "Error checking for marker file in " + job.getFullName(), e);
                 }
             }
         } catch (Exception e) {
             // Log and continue with other methods
-//            LOGGER.log(Level.FINE, "Error checking build parameters for " + job.getFullName(), e);
+            LOGGER.log(Level.FINE, "Error checking build parameters for " + job.getFullName(), e);
         }
 
         // Method 3: Check Pipeline jobs for ArmorCode step
@@ -359,15 +323,20 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
                 // Method 3.1: Check config XML for ArmorCode
                 try {
                     String configXml = job.getConfigFile().asString();
-                    if (configXml.contains("armorcodeReleaseGate(") || // Step call with parenthesis
-                            configXml.contains("new ArmorCodeReleaseGateBuilder(") || // Builder instance
-                            configXml.contains("step $class: 'ArmorCodeReleaseGateBuilder'") || // Pipeline syntax
-                            configXml.contains("ArmorCode.GateUsed") || // Parameters
-                            configXml.matches("(?s).*\\bArmorCode\\b.*\\bReleaseGate\\b.*")) { // Loosely coupled references
+                    if (configXml.contains("armorcodeReleaseGate(")
+                            || // Step call with parenthesis
+                            configXml.contains("new ArmorCodeReleaseGateBuilder(")
+                            || // Builder instance
+                            configXml.contains("step $class: 'ArmorCodeReleaseGateBuilder'")
+                            || // Pipeline syntax
+                            configXml.contains("ArmorCode.GateUsed")
+                            || // Parameters
+                            configXml.matches(
+                                    "(?s).*\\bArmorCode\\b.*\\bReleaseGate\\b.*")) { // Loosely coupled references
                         return true;
                     }
                 } catch (Exception e) {
-//                    LOGGER.log(Level.FINE, "Error checking XML config for " + job.getFullName(), e);
+                    LOGGER.log(Level.FINE, "Error checking XML config for " + job.getFullName(), e);
                 }
 
                 // Method 3.2: For multibranch pipelines, also check build logs
@@ -376,14 +345,14 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
                     Run<?, ?> lastBuild = job.getLastBuild();
                     if (lastBuild != null) {
                         // Check if the build log contains evidence of ArmorCode execution
-                        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                                lastBuild.getLogInputStream()))) {
+                        try (BufferedReader reader = new BufferedReader(
+                                new InputStreamReader(lastBuild.getLogInputStream(), StandardCharsets.UTF_8))) {
                             String line;
                             while ((line = reader.readLine()) != null) {
-                                if (line.contains("=== Starting ArmorCode Release Gate Check ===") ||
-                                        line.contains("=== ArmorCode Release Gate ===") ||
-                                        line.matches(".*\\[INFO\\]\\s+ArmorCode check passed.*") ||
-                                        line.matches(".*\\[BLOCK\\]\\s+SLA check.*")) {
+                                if (line.contains("=== Starting ArmorCode Release Gate Check ===")
+                                        || line.contains("=== ArmorCode Release Gate ===")
+                                        || line.matches(".*\\[INFO\\]\\s+ArmorCode check passed.*")
+                                        || line.matches(".*\\[BLOCK\\]\\s+SLA check.*")) {
                                     return true;
                                 }
                             }
@@ -397,26 +366,28 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
                         }
                     }
                 } catch (Exception e) {
-//                    LOGGER.log(Level.FINE, "Error checking build logs for " + job.getFullName(), e);
+                    LOGGER.log(Level.FINE, "Error checking build logs for " + job.getFullName(), e);
                 }
             }
         } catch (Exception e) {
             // Log and continue
-//            LOGGER.log(Level.FINE, "Error checking pipeline config for " + job.getFullName(), e);
+            LOGGER.log(Level.FINE, "Error checking pipeline config for " + job.getFullName(), e);
         }
 
-//        Script detection logic
+        //        Script detection logic
         try {
             String configXml = job.getConfigFile().asString();
 
             // Look for API endpoint patterns in the config
-            if (configXml.contains("armorcode.ai/client/buildvalidation") || configXml.contains("armorcode.com/client/buildvalidation") ||
-                    configXml.contains("curl") && configXml.contains("Authorization: Bearer") &&
-                            (configXml.contains("armorcode.ai") || configXml.contains("ArmorCode"))) {
+            if (configXml.contains("armorcode.ai/client/buildvalidation")
+                    || configXml.contains("armorcode.com/client/buildvalidation")
+                    || configXml.contains("curl")
+                            && configXml.contains("Authorization: Bearer")
+                            && (configXml.contains("armorcode.ai") || configXml.contains("ArmorCode"))) {
                 return true;
             }
         } catch (Exception e) {
-//            LOGGER.log(Level.FINE, "Error checking config for script-based integration", e);
+            LOGGER.log(Level.FINE, "Error checking config for script-based integration", e);
         }
 
         // Additional method specifically for multibranch pipeline projects
@@ -424,14 +395,15 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
             // This might be a branch in a multibranch project
             try {
                 // Try to get the parent job (the multibranch project itself)
-                String parentJobName = job.getFullName().substring(0, job.getFullName().lastIndexOf('/'));
-                Job<?,?> parentJob = Jenkins.get().getItemByFullName(parentJobName, Job.class);
+                String parentJobName =
+                        job.getFullName().substring(0, job.getFullName().lastIndexOf('/'));
+                Job<?, ?> parentJob = Jenkins.get().getItemByFullName(parentJobName, Job.class);
 
                 if (parentJob != null) {
                     // Check if the parent job's name or description mentions ArmorCode
-                    if (parentJob.getDescription() != null &&
-                            (parentJob.getDescription().contains("ArmorCode") ||
-                                    parentJob.getDescription().contains("armorcode"))) {
+                    if (parentJob.getDescription() != null
+                            && (parentJob.getDescription().contains("ArmorCode")
+                                    || parentJob.getDescription().contains("armorcode"))) {
                         return true;
                     }
 
@@ -439,19 +411,18 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
                     // and not directly accessible, so we need more heuristics
                     if (parentJob.getClass().getName().contains("MultiBranchProject")) {
                         // Check if other branches in the same project use ArmorCode
-                        for (Job<?,?> siblingJob : Jenkins.get().getAllItems(Job.class)) {
-                            if (siblingJob != job &&
-                                    siblingJob.getFullName().startsWith(parentJobName + "/")) {
+                        for (Job<?, ?> siblingJob : Jenkins.get().getAllItems(Job.class)) {
+                            if (siblingJob != job && siblingJob.getFullName().startsWith(parentJobName + "/")) {
                                 try {
-                                    Run<?,?> siblingBuild = siblingJob.getLastBuild();
+                                    Run<?, ?> siblingBuild = siblingJob.getLastBuild();
                                     if (siblingBuild != null) {
                                         try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                                                siblingBuild.getLogInputStream()))) {
+                                                siblingBuild.getLogInputStream(), StandardCharsets.UTF_8))) {
                                             String line;
                                             while ((line = reader.readLine()) != null) {
-                                                if (line.contains("ArmorCode") ||
-                                                        line.contains("armorcode") ||
-                                                        line.contains("armorcodeReleaseGate")) {
+                                                if (line.contains("ArmorCode")
+                                                        || line.contains("armorcode")
+                                                        || line.contains("armorcodeReleaseGate")) {
                                                     // If a sibling branch uses ArmorCode, this one likely does too
                                                     return true;
                                                 }
@@ -460,14 +431,14 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
                                     }
                                 } catch (Exception e) {
                                     // Just log and continue
-//                                    LOGGER.log(Level.FINE, "Error checking sibling branch for " + job.getFullName(), e);
+                                    LOGGER.log(Level.FINE, "Error checking sibling branch for " + job.getFullName(), e);
                                 }
                             }
                         }
                     }
                 }
             } catch (Exception e) {
-//                LOGGER.log(Level.FINE, "Error checking parent job for " + job.getFullName(), e);
+                LOGGER.log(Level.FINE, "Error checking parent job for " + job.getFullName(), e);
             }
         }
 
@@ -477,8 +448,8 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
     /**
      * Send job data to ArmorCode in batches to handle large numbers of jobs.
      */
-    private boolean sendJobsDataInBatches(ArmorCodeGlobalConfig config, String token,
-                                          List<JSONObject> allJobsData, TaskListener listener) {
+    private boolean sendJobsDataInBatches(
+            ArmorCodeGlobalConfig config, String token, List<JSONObject> allJobsData, TaskListener listener) {
         // Define batch size - adjust based on your performance needs
         final int BATCH_SIZE = 50;
         int totalJobs = allJobsData.size();
@@ -486,10 +457,6 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
 
         // Calculate how many batches we'll need
         int batchCount = (int) Math.ceil((double) totalJobs / BATCH_SIZE);
-//        listener.getLogger().println("[ArmorCode] Sending " + totalJobs +
-//                " jobs in " + batchCount + " batches (max " + BATCH_SIZE + " jobs per batch)");
-//        LOGGER.info("[ArmorCode] Sending " + totalJobs +
-//                " jobs in " + batchCount + " batches (max " + BATCH_SIZE + " jobs per batch)");
 
         // Process each batch
         for (int i = 0; i < batchCount; i++) {
@@ -499,11 +466,6 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
 
             // Get the current batch of jobs
             List<JSONObject> batchJobs = allJobsData.subList(startIndex, endIndex);
-
-//            listener.getLogger().println("[ArmorCode] Sending batch " + (i+1) + "/" + batchCount +
-//                    " with " + batchJobs.size() + " jobs");
-//            LOGGER.info("[ArmorCode] Sending batch " + (i+1) + "/" + batchCount +
-//                    " with " + batchJobs.size() + " jobs");
 
             // Send the batch
             boolean batchSuccess = sendBatch(config, token, batchJobs, listener);
@@ -523,10 +485,7 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
         }
 
         // Report overall results
-//        listener.getLogger().println("[ArmorCode] Successfully sent " + successCount +
-//                " of " + totalJobs + " jobs to ArmorCode");
-        LOGGER.info("[ArmorCode] Successfully sent " + successCount +
-                " of " + totalJobs + " jobs to ArmorCode");
+        LOGGER.info("[ArmorCode] Successfully sent " + successCount + " of " + totalJobs + " jobs to ArmorCode");
 
         return successCount == totalJobs;
     }
@@ -534,8 +493,8 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
     /**
      * Send a single batch of job data to ArmorCode.
      */
-    private boolean sendBatch(ArmorCodeGlobalConfig config, String token,
-                              List<JSONObject> batchJobs, TaskListener listener) {
+    private boolean sendBatch(
+            ArmorCodeGlobalConfig config, String token, List<JSONObject> batchJobs, TaskListener listener) {
         HttpURLConnection conn = null;
         try {
             // Create batch payload
@@ -545,10 +504,6 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
 
             // Build endpoint URL
             String uri = config.getBaseUrl() + "/client/builds/jobs/discovery/monitoring";
-
-            // Log the payload for debugging
-//            listener.getLogger().println("[ArmorCode] Sending batch payload: " + batchPayload.toString());
-//            LOGGER.info("[ArmorCode] Sending batch payload: " + batchPayload.toString());
 
             // Set up connection
             URL url = new URL(uri);
@@ -571,38 +526,39 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
             int responseCode = conn.getResponseCode();
             if (responseCode != 200) {
                 StringBuilder errorResponse = new StringBuilder();
-                try (BufferedReader errorReader = new BufferedReader(
-                        new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
+                try (BufferedReader errorReader =
+                        new BufferedReader(new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
                     String line;
                     while ((line = errorReader.readLine()) != null) {
                         errorResponse.append(line);
                     }
-                } catch (Exception ex) {
-//                    listener.error("[ArmorCode] Could not read error response: " + ex.getMessage());
-//                    LOGGER.log(Level.WARNING, "Could not read error response", ex);
+                } catch (IOException ex) {
+                    listener.error("[ArmorCode] Could not read error response: " + ex.getMessage());
+                    LOGGER.log(Level.WARNING, "Could not read error response", ex);
                 }
 
-//                listener.error("[ArmorCode] Batch send failed with HTTP " + responseCode + ": " + errorResponse);
+                //                listener.error("[ArmorCode] Batch send failed with HTTP " + responseCode + ": " +
+                // errorResponse);
                 LOGGER.log(Level.WARNING, "Batch send failed with HTTP " + responseCode + ": " + errorResponse);
                 return false;
             }
 
             // Read successful response
             StringBuilder response = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+            try (BufferedReader reader =
+                    new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     response.append(line);
                 }
             }
 
-//            listener.getLogger().println("[ArmorCode] Batch sent successfully");
+            //            listener.getLogger().println("[ArmorCode] Batch sent successfully");
             LOGGER.info("[ArmorCode] Batch sent successfully: " + response);
             return true;
 
-        } catch (Exception e) {
-//            listener.error("[ArmorCode] Error sending batch: " + e.getMessage());
+        } catch (IOException e) {
+            listener.error("[ArmorCode] Error sending batch: " + e.getMessage());
             LOGGER.log(Level.WARNING, "Error sending batch to ArmorCode", e);
             return false;
         } finally {

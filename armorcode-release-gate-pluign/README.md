@@ -19,4 +19,4 @@ Features include build monitoring, flexible release gate controls, and detailed 
 2. For running the plugin in a local Jenkins instance, run `mvn hpi:run -Dport=5000`
 3. For installing the plugin in a Jenkins instance, run `mvn package` and upload the generated `hpi` file in the Jenkins plugin manager.
 
-Or  simply run this command `mvn clean package -DskipTests -Dscminfo.skip=true -Drevision=1.0.11 -Dchangelist= -Djgit.skip=true` to build the plugin.
+Or  simply run this command `mvn clean package -Drevision=<revison-version> -Dchangelist=` to build the plugin.

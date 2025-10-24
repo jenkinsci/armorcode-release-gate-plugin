@@ -1,27 +1,26 @@
 package io.jenkins.plugins.armorcode.config;
 
+import antlr.ANTLRException;
 import hudson.Extension;
 import hudson.scheduler.CronTab;
+import hudson.util.FormValidation;
 import io.jenkins.plugins.armorcode.ArmorCodeJobDiscovery;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import jenkins.model.GlobalConfiguration;
 import jenkins.model.Jenkins;
 import org.kohsuke.stapler.DataBoundSetter;
-import hudson.util.FormValidation;
 import org.kohsuke.stapler.QueryParameter;
 import org.kohsuke.stapler.verb.POST;
-
-import java.net.HttpURLConnection;
-import java.net.URL;
-import antlr.ANTLRException;
 
 @Extension
 public class ArmorCodeGlobalConfig extends GlobalConfiguration {
 
     private String baseUrl = "https://app.armorcode.com";
     private boolean monitorBuilds = false;
-    private String jobFilter = "";  // Default to all jobs
-    private String includeJobsPattern = ".*";  // Default to all jobs
-    private String excludeJobsPattern = "";    // Default to no exclusions
+    private String jobFilter = ""; // Default to all jobs
+    private String includeJobsPattern = ".*"; // Default to all jobs
+    private String excludeJobsPattern = ""; // Default to no exclusions
 
     private String cronExpression = "H H * * *"; // default to daily once per day at a random hour
 
@@ -189,7 +188,7 @@ public class ArmorCodeGlobalConfig extends GlobalConfiguration {
         }
 
         try {
-            CronTab cronTab = new CronTab(value);
+            new CronTab(value);
 
             // Check if the cron would run more frequently than hourly
             if (isTooFrequent(value)) {
@@ -215,7 +214,6 @@ public class ArmorCodeGlobalConfig extends GlobalConfiguration {
         }
 
         String minutes = parts[0];
-        String hours = parts[1];
 
         // Check for expressions that would cause multiple runs within an hour
 

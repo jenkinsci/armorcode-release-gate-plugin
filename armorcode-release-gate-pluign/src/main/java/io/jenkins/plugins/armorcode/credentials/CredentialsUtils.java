@@ -5,9 +5,9 @@ import com.cloudbees.plugins.credentials.CredentialsProvider;
 import com.cloudbees.plugins.credentials.domains.DomainRequirement;
 import hudson.model.Run;
 import hudson.security.ACL;
-import org.jenkinsci.plugins.plaincredentials.StringCredentials;
 import java.util.Collections;
 import java.util.List;
+import org.jenkinsci.plugins.plaincredentials.StringCredentials;
 
 public class CredentialsUtils {
     /**
@@ -20,9 +20,9 @@ public class CredentialsUtils {
     public static String getSecretText(Run<?, ?> run, String credentialsId) {
         List<DomainRequirement> domainRequirements = Collections.emptyList();
         StringCredentials credential = CredentialsMatchers.firstOrNull(
-                CredentialsProvider.lookupCredentials(StringCredentials.class, run.getParent(), ACL.SYSTEM, domainRequirements),
-                CredentialsMatchers.withId(credentialsId)
-        );
+                CredentialsProvider.lookupCredentials(
+                        StringCredentials.class, run.getParent(), ACL.SYSTEM, domainRequirements),
+                CredentialsMatchers.withId(credentialsId));
         return credential != null ? credential.getSecret().getPlainText() : null;
     }
 
@@ -42,13 +42,8 @@ public class CredentialsUtils {
         List<DomainRequirement> domainRequirements = Collections.emptyList();
         StringCredentials credential = CredentialsMatchers.firstOrNull(
                 CredentialsProvider.lookupCredentials(
-                        StringCredentials.class,
-                        jenkins.model.Jenkins.get(),
-                        ACL.SYSTEM,
-                        domainRequirements
-                ),
-                CredentialsMatchers.withId("ARMORCODE_TOKEN")
-        );
+                        StringCredentials.class, jenkins.model.Jenkins.get(), ACL.SYSTEM, domainRequirements),
+                CredentialsMatchers.withId("ARMORCODE_TOKEN"));
         return credential != null ? credential.getSecret().getPlainText() : null;
     }
 }
