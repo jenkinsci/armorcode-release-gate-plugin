@@ -182,7 +182,8 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
 
             // Log execution time
         } catch (Exception e) {
-            e.printStackTrace(listener.error("[ArmorCode] Error during job discovery"));
+            listener.error("[ArmorCode] Error during job discovery. See Jenkins system log for details.");
+            LOGGER.log(Level.SEVERE, "[ArmorCode] Error during job discovery", e);
         }
     }
 
