@@ -132,8 +132,8 @@ public class ArmorCodeGlobalConfig extends GlobalConfiguration {
         if (value.isEmpty()) {
             return FormValidation.error("Base URL must not be empty");
         }
-        if (!value.startsWith("http://") && !value.startsWith("https://")) {
-            return FormValidation.error("Base URL must start with http:// or https://");
+        if (!value.startsWith("https://")) {
+            return FormValidation.error("Base URL must start with https://");
         }
         return FormValidation.ok();
     }

@@ -539,7 +539,7 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
                     LOGGER.log(Level.WARNING, "Could not read error response", ex);
                 }
 
-                LOGGER.log(Level.WARNING, "Batch send failed with HTTP " + responseCode + ": " + errorResponse);
+                LOGGER.log(Level.WARNING, "Batch send failed with HTTP " + responseCode);
                 return false;
             }
 
@@ -553,7 +553,7 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
                 }
             }
 
-            LOGGER.info("[ArmorCode] Batch sent successfully: " + response);
+            LOGGER.info("[ArmorCode] Batch sent successfully.");
             return true;
 
         } catch (IOException e) {
