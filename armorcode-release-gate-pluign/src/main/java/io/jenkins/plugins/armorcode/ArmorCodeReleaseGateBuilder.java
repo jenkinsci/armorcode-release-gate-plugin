@@ -530,10 +530,6 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
                 String.valueOf(end),
                 jobUrl);
 
-        // Log the request details for debugging
-        System.out.println("POST URL: " + apiUrl);
-        System.out.println("Payload: " + payload);
-
         // Configure HTTP connection
         String uri = apiUrl + "/client/build";
         URL url = new URL(uri);
@@ -552,7 +548,6 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
 
         // Check response code before reading
         int responseCode = conn.getResponseCode();
-        System.out.println("Response code: " + responseCode);
 
         if (responseCode >= 200 && responseCode < 300) {
             // Success case
@@ -568,7 +563,7 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
             // Error case - extract and log the error response
             StringBuilder errorResponse = new StringBuilder();
             try (BufferedReader errorReader =
-                    new BufferedReader(new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
+                         new BufferedReader(new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = errorReader.readLine()) != null) {
                     errorResponse.append(line);
@@ -577,7 +572,6 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
                 errorResponse.append("Failed to read error stream: ").append(ex.getMessage());
             }
 
-            System.out.println("Error response: " + errorResponse.toString());
             throw new IOException("Server returned HTTP response code: " + responseCode + " for URL: " + apiUrl
                     + " with message: " + errorResponse);
         }

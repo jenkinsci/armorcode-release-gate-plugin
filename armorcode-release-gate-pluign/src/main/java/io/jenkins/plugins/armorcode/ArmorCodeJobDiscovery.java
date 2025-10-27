@@ -551,7 +551,6 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
                 }
             }
 
-            //            listener.getLogger().println("[ArmorCode] Batch sent successfully");
             LOGGER.info("[ArmorCode] Batch sent successfully: " + response);
             return true;
 
