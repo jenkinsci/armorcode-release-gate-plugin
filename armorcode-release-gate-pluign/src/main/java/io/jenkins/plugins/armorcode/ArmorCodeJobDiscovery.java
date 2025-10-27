@@ -232,7 +232,8 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
                 if (jenkinsRootUrl != null && !jenkinsRootUrl.isEmpty()) {
                     jobData.put("jobURL", jenkinsRootUrl + "job/" + jobName + "/");
                 } else {
-                    jobData.put("jobURL", "http://localhost:8080/job/" + jobName + "/");
+                    LOGGER.warning("[ArmorCode] Could not determine Jenkins job URL. Please configure the Jenkins URL in the Jenkins global configuration.");
+                    jobData.put("jobURL", "");
                 }
             }
 

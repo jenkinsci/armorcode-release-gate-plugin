@@ -35,8 +35,8 @@
     <revision>1.0.5</revision>
     <changelist>-SNAPSHOT</changelist>
     <!-- https://www.jenkins.io/doc/developer/plugin-development/choosing-jenkins-baseline/ -->
-    <jenkins.version>2.361.1</jenkins.version>
-    <jenkins.pluginName>ArmorCode Release Gate</jenkins.pluginName>
+      <jenkins.version>2.361.1</jenkins.version>
+      <jenkins.pluginName>ArmorCode Release Gate</jenkins.pluginName>
     <jenkins.pluginDescription>A Jenkins build step that polls ArmorCode's build validation endpoint to enforce release gates. It can operate in either "warn" mode (marking the build as UNSTABLE if validation fails) or "block" mode (failing the build).</jenkins.pluginDescription>
     <spotless.check.skip>false</spotless.check.skip>
     <git.useExistingClientIfPresent>false</git.useExistingClientIfPresent>
@@ -46,8 +46,8 @@
     <dependencies>
       <dependency>
         <groupId>io.jenkins.tools.bom</groupId>
-        <artifactId>bom-2.361.x</artifactId>
-        <version>1678.vc1feb_6a_3c0f1</version>
+          <artifactId>bom-2.361.x</artifactId>
+          <version>1678.vc1feb_6a_3c0f1</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>

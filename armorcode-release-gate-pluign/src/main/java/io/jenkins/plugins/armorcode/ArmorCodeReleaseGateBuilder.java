@@ -8,6 +8,9 @@ import hudson.Launcher;
 import hudson.model.Result;
 import hudson.model.Run;
 import hudson.model.TaskListener;
+import hudson.model.ParameterValue;
+import hudson.model.ParametersAction;
+import hudson.model.StringParameterValue;
 import hudson.tasks.BuildStepDescriptor;
 import hudson.tasks.BuildStepMonitor;
 import hudson.tasks.Builder;
@@ -21,7 +24,9 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import jenkins.model.CauseOfInterruption;
@@ -329,6 +334,10 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
         this.testResponseString = testResponseString;
     }
 
+    public String getTestResponseString() {
+        return testResponseString;
+    }
+
     private boolean isNullOrEmpty(Object value) {
         if (value == null) return true;
         if (value instanceof String) {
@@ -355,6 +364,24 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
     /**
      * Determines how to handle a FAILED status depending on the mode.
      */
+    private void saveGateInfoToProperties(Run<?, ?> run, String gateResult) {
+        List<ParameterValue> newParams = new ArrayList<>();
+        newParams.add(new StringParameterValue("ArmorCode.GateUsed", "true"));
+        newParams.add(new StringParameterValue("ArmorCode.Product", product));
+        newParams.add(new StringParameterValue("ArmorCode.SubProducts", subProducts.toString()));
+        newParams.add(new StringParameterValue("ArmorCode.Env", env));
+        newParams.add(new StringParameterValue("ArmorCode.GateResult", gateResult));
+
+        List<String> safeParameterNames = new ArrayList<>();
+        safeParameterNames.add("ArmorCode.GateUsed");
+        safeParameterNames.add("ArmorCode.Product");
+        safeParameterNames.add("ArmorCode.SubProducts");
+        safeParameterNames.add("ArmorCode.Env");
+        safeParameterNames.add("ArmorCode.GateResult");
+
+        run.addAction(new ParametersAction(newParams, safeParameterNames));
+    }
+
     private void handleFailureMode(Run<?, ?> run, TaskListener listener) throws InterruptedException, AbortException {
         if ("block".equalsIgnoreCase(mode)) {
             listener.getLogger().println("[BLOCK] SLA check FAILED => Terminating build with failure.");
@@ -423,16 +450,13 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
             if (jenkinsRootUrl != null && !jenkinsRootUrl.isEmpty()) {
                 jobUrl = jenkinsRootUrl + "/job/" + jobName + "/";
             } else {
-                jobUrl = "http://localhost:8080/job/" + jobName + "/";
+                listener.getLogger().println("[WARN] Could not determine Jenkins job URL. Please configure the Jenkins URL in the Jenkins global configuration.");
+                jobUrl = "";
             }
         }
 
         // Log initial context
         listener.getLogger().println("=== Starting ArmorCode Release Gate Check ===");
-        listener.getLogger()
-                .printf(
-                        "product=%s, subProduct=%s, env=%s, maxRetries=%d, mode=%s%n",
-                        product, subProducts, env, maxRetries, mode);
 
         // Poll up to maxRetries times
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
@@ -462,7 +486,7 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
                     // SLA failure => provide detailed error with links
                     String detailedError = formatDetailedErrorMessage(run, json);
                     listener.getLogger().println(detailedError);
-                    //                    saveGateInfoToProperties(run, listener);
+                    saveGateInfoToProperties(run, "FAIL");
                     TimeUnit.SECONDS.sleep(retryDelay);
                     handleFailureMode(run, listener);
                     if (!"warn".equalsIgnoreCase(mode)) {
@@ -474,7 +498,7 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
                 } else {
                     // SUCCESS or RELEASE or other statuses => pass and break out
                     listener.getLogger().println("[INFO] ArmorCode check passed! Proceeding...");
-                    //                    saveGateInfoToProperties(run, listener);
+                    saveGateInfoToProperties(run, "PASS");
                     TimeUnit.SECONDS.sleep(retryDelay);
                     return;
                 }
@@ -508,6 +532,7 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
 
         // If the loop completes without returning, it means max retries were hit on HOLD
         listener.getLogger().println("[ERROR] ArmorCode check did not pass after " + maxRetries + " retries (last status was HOLD).");
+        saveGateInfoToProperties(run, "FAIL");
         handleFailureMode(run, listener);
     }
 
