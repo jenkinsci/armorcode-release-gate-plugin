@@ -67,6 +67,7 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
         this.subProducts = subProducts;
         this.env = env;
     }
+    
     /**
      * Optional parameter: how many times to retry the validation check.
      *
@@ -112,6 +113,17 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
 
     public String getTargetUrl() {
         return targetUrl;
+    }
+
+    private int retryDelay = 20; // seconds
+
+    @DataBoundSetter
+    public void setRetryDelay(int retryDelay) {
+        this.retryDelay = retryDelay;
+    }
+
+    public int getRetryDelay() {
+        return retryDelay;
     }
 
     /**
@@ -310,6 +322,13 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
     // Add transient keyword to prevent serialization
     private final transient JSONObject testResponseOverride = null;
 
+    private transient String testResponseString;
+
+    @DataBoundSetter
+    public void setTestResponseString(String testResponseString) {
+        this.testResponseString = testResponseString;
+    }
+
     private boolean isNullOrEmpty(Object value) {
         if (value == null) return true;
         if (value instanceof String) {
@@ -322,16 +341,14 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
     }
 
     private void validateSecurityPrerequisites(Run<?, ?> run, TaskListener listener, String token)
-            throws InterruptedException {
+            throws AbortException {
         // Strict parameter validation
         if (isNullOrEmpty(product) || isNullOrEmpty(subProducts) || isNullOrEmpty(env)) {
-            run.setResult(Result.FAILURE);
-            throw new InterruptedException("Incomplete security configuration");
+            throw new AbortException("Incomplete security configuration");
         }
 
         if (isNullOrEmpty(token)) {
-            run.setResult(Result.FAILURE);
-            throw new InterruptedException("Missing security authentication");
+            throw new AbortException("Missing security authentication");
         }
     }
 
@@ -381,7 +398,7 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
             @NonNull FilePath workspace,
             @NonNull Launcher launcher,
             @NonNull TaskListener listener)
-            throws InterruptedException, Error {
+            throws InterruptedException, Error, AbortException {
 
         // Gather Jenkins context info
         final String buildNumber = String.valueOf(run.getNumber());
@@ -422,27 +439,31 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
             try {
                 // Process response - either from test override or from actual API call
                 JSONObject json;
-                // Make the HTTP POST request and parse the response
-                String responseStr = postArmorCodeRequest(
-                        listener, token, buildNumber, jobName, attempt, maxRetries, apiBaseUrl, jobUrl);
-                json = (JSONObject) JSONSerializer.toJSON(responseStr);
+                if (testMode && testResponseString != null && !testResponseString.isEmpty()) {
+                    json = (JSONObject) JSONSerializer.toJSON(testResponseString);
+                } else {
+                    // Make the HTTP POST request and parse the response
+                    String responseStr = postArmorCodeRequest(
+                            listener, token, buildNumber, jobName, attempt, maxRetries, apiBaseUrl, jobUrl);
+                    json = (JSONObject) JSONSerializer.toJSON(responseStr);
+                }
                 String status = json.optString("status", "UNKNOWN");
                 listener.getLogger().println("=== ArmorCode Release Gate ===");
                 listener.getLogger().println("Status: " + status);
 
                 if ("HOLD".equalsIgnoreCase(status)) {
                     // On HOLD => wait 20 seconds, then retry
-                    listener.getLogger().println("[INFO] SLA is on HOLD. Sleeping 20s...");
+                    listener.getLogger().println("[INFO] SLA is on HOLD. Sleeping " + retryDelay + "s...");
                     listener.getLogger()
                             .println(
-                                    "[INFO] Sleeping 20 seconds before trying again. You can temporarily release the build from ArmorCode console");
-                    TimeUnit.SECONDS.sleep(20);
+                                    "[INFO] Sleeping " + retryDelay + " seconds before trying again. You can temporarily release the build from ArmorCode console");
+                    TimeUnit.SECONDS.sleep(retryDelay);
                 } else if ("FAILED".equalsIgnoreCase(status)) {
                     // SLA failure => provide detailed error with links
                     String detailedError = formatDetailedErrorMessage(run, json);
                     listener.getLogger().println(detailedError);
                     //                    saveGateInfoToProperties(run, listener);
-                    TimeUnit.SECONDS.sleep(20);
+                    TimeUnit.SECONDS.sleep(retryDelay);
                     handleFailureMode(run, listener);
                     if (!"warn".equalsIgnoreCase(mode)) {
                         return;
@@ -454,7 +475,7 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
                     // SUCCESS or RELEASE or other statuses => pass and break out
                     listener.getLogger().println("[INFO] ArmorCode check passed! Proceeding...");
                     //                    saveGateInfoToProperties(run, listener);
-                    TimeUnit.SECONDS.sleep(20);
+                    TimeUnit.SECONDS.sleep(retryDelay);
                     return;
                 }
             } catch (QuitException | FlowInterruptedException e) {
@@ -476,15 +497,18 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
 
                 // If we've tried all retries, fail the build
                 if (attempt == maxRetries) {
-                    run.setResult(Result.FAILURE);
-                    throw new InterruptedException("ArmorCode request error after maximum retries.");
+                    throw new AbortException("ArmorCode request error after maximum retries.");
                 }
 
                 // Otherwise wait and retry
-                listener.getLogger().println("Waiting 20s before retry...");
-                TimeUnit.SECONDS.sleep(20);
+                listener.getLogger().println("Waiting " + retryDelay + "s before retry...");
+                TimeUnit.SECONDS.sleep(retryDelay);
             }
         }
+
+        // If the loop completes without returning, it means max retries were hit on HOLD
+        listener.getLogger().println("[ERROR] ArmorCode check did not pass after " + maxRetries + " retries (last status was HOLD).");
+        handleFailureMode(run, listener);
     }
 
     /**

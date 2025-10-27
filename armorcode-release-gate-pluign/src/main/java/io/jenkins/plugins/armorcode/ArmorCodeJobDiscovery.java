@@ -88,8 +88,8 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
         }
 
         String cronExpression = config.getCronExpression();
-        if (cronExpression == null || cronExpression.trim().isEmpty()) {
-            LOGGER.fine("No cron expression specified, using default daily schedule");
+        if (cronExpression == null || cronExpression.trim().isEmpty() || "H H * * *".equals(cronExpression.trim())) {
+            LOGGER.fine("No cron expression or default daily cron, using 24 hours schedule");
             return TimeUnit.HOURS.toMillis(24);
         }
 
