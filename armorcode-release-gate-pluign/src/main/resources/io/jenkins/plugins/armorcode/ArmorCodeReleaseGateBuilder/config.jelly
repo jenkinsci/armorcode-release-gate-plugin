@@ -1,5 +1,5 @@
 <!--<?xml version="1.0" encoding="UTF-8"?>-->
-<!--<?jelly escape-by-default='true'?>-->
+<?jelly escape-by-default='true'?>
 <!--<j:jelly xmlns:j="jelly:core" xmlns:f="/lib/form" xmlns:st="jelly:stapler">-->
 
 <!--    &lt;!&ndash;-->
@@ -74,8 +74,8 @@
             <f:textbox />
         </f:entry>
 
-        <f:entry title="Sub-Group" field="subProduct" description="ArmorCode sub-group (sub-product) identifier">
-            <f:textbox />
+        <f:entry title="Sub-Groups" field="subProducts" description="ArmorCode sub-group (sub-product) identifiers. Enter one per line for multiple.">
+            <f:textarea />
         </f:entry>
 
         <f:entry title="Environment" field="env" description="Deployment environment (e.g., Production, Staging, QA)">

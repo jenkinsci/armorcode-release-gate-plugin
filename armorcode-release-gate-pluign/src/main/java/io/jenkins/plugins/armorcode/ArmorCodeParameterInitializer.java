@@ -13,15 +13,16 @@ public class ArmorCodeParameterInitializer {
         String currentParams = System.getProperty("hudson.model.ParametersAction.safeParameters", "");
 
         // Parameters to whitelist
-        String armorCodeParams = "ArmorCode.GateUsed,ArmorCode.Product,ArmorCode.SubProduct,ArmorCode.Env,ArmorCode.GateResult";
+        String armorCodeParams =
+                "ArmorCode.GateUsed,ArmorCode.Product,ArmorCode.SubProducts,ArmorCode.Env,ArmorCode.GateResult";
 
         // Only add them if they're not already included
         if (!currentParams.contains(armorCodeParams)) {
             if (currentParams.isEmpty()) {
                 System.setProperty("hudson.model.ParametersAction.safeParameters", armorCodeParams);
             } else {
-                System.setProperty("hudson.model.ParametersAction.safeParameters",
-                        currentParams + "," + armorCodeParams);
+                System.setProperty(
+                        "hudson.model.ParametersAction.safeParameters", currentParams + "," + armorCodeParams);
             }
         }
     }

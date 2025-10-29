@@ -5,14 +5,30 @@ import hudson.AbortException;
 import hudson.Extension;
 import hudson.FilePath;
 import hudson.Launcher;
+import hudson.model.Result;
 import hudson.model.Run;
 import hudson.model.TaskListener;
-import hudson.model.Result;
-import hudson.tasks.Builder;
+import hudson.model.ParameterValue;
+import hudson.model.ParametersAction;
+import hudson.model.StringParameterValue;
 import hudson.tasks.BuildStepDescriptor;
 import hudson.tasks.BuildStepMonitor;
+import hudson.tasks.Builder;
 import io.jenkins.plugins.armorcode.config.ArmorCodeGlobalConfig;
 import io.jenkins.plugins.armorcode.credentials.CredentialsUtils;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.UnsupportedEncodingException;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.TimeUnit;
 import jenkins.model.CauseOfInterruption;
 import jenkins.model.InterruptedBuildAction;
 import jenkins.tasks.SimpleBuildStep;
@@ -23,26 +39,16 @@ import org.jenkinsci.plugins.workflow.steps.FlowInterruptedException;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.DataBoundSetter;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStreamReader;
-import java.io.UnsupportedEncodingException;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.net.URLEncoder;
-import java.util.Collections;
-import java.util.concurrent.TimeUnit;
-
 public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildStep {
 
     // Required parameters
     private final String product;
-    private final String subProduct;
+    private final Object subProducts;
     private final String env;
 
     // Optional parameters with default values
-    private int maxRetries = 5;       // How many times to poll before giving up
-    private String mode = "block";     // "block" or "warn"
+    private int maxRetries = 5; // How many times to poll before giving up
+    private String mode = "block"; // "block" or "warn"
 
     // The target URL for the ArmorCode build validation endpoint
     private String targetUrl = "https://app.armorcode.com/client/build";
@@ -57,15 +63,16 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
      * Required constructor parameters.
      *
      * @param product   The ArmorCode product (group) ID.
-     * @param subProduct The ArmorCode sub-product (subgroup) ID.
+     * @param subProducts The ArmorCode sub-product (subgroup) ID.
      * @param env  The environment (e.g. "Production", "Staging").
      */
     @DataBoundConstructor
-    public ArmorCodeReleaseGateBuilder(String product, String subProduct, String env) {
+    public ArmorCodeReleaseGateBuilder(String product, Object subProducts, String env) {
         this.product = product;
-        this.subProduct = subProduct;
+        this.subProducts = subProducts;
         this.env = env;
     }
+    
     /**
      * Optional parameter: how many times to retry the validation check.
      *
@@ -93,8 +100,8 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
         return product;
     }
 
-    public String getSubProduct() {
-        return subProduct;
+    public Object getSubProducts() {
+        return subProducts;
     }
 
     public String getEnv() {
@@ -113,14 +120,26 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
         return targetUrl;
     }
 
+    private int retryDelay = 20; // seconds
+
+    @DataBoundSetter
+    public void setRetryDelay(int retryDelay) {
+        this.retryDelay = retryDelay;
+    }
+
+    public int getRetryDelay() {
+        return retryDelay;
+    }
+
     /**
      * Creates a detailed error message with links and context information
      * Handles both severity-based and risk-based release gates
      */
-    private String formatDetailedErrorMessage(Run<?,?> run, JSONObject responseJson) throws UnsupportedEncodingException {
+    private String formatDetailedErrorMessage(Run<?, ?> run, JSONObject responseJson)
+            throws UnsupportedEncodingException {
         StringBuilder message = new StringBuilder();
         message.append("Group: ").append(product).append("\n");
-        message.append("Sub Group: ").append(subProduct).append("\n");
+        message.append("Sub Group: ").append(subProducts).append("\n");
         message.append("Environment: ").append(env).append("\n");
 
         // Extract findings scope based on the release gate type
@@ -132,32 +151,33 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
         // Determine if severity-based by checking if any severity value is > 0
         if (responseJson.has("severity") && responseJson.optJSONObject("severity") != null) {
             JSONObject severity = responseJson.getJSONObject("severity");
-            if ((severity.has("Critical") && severity.getInt("Critical") > 0) ||
-                    (severity.has("High") && severity.getInt("High") > 0) ||
-                    (severity.has("Medium") && severity.getInt("Medium") > 0) ||
-                    (severity.has("Low") && severity.getInt("Low") > 0)) {
+            if ((severity.has("Critical") && severity.getInt("Critical") > 0)
+                    || (severity.has("High") && severity.getInt("High") > 0)
+                    || (severity.has("Medium") && severity.getInt("Medium") > 0)
+                    || (severity.has("Low") && severity.getInt("Low") > 0)) {
                 isSeverityBased = true;
             }
-        } else if ((responseJson.has("severity.Critical") && responseJson.getInt("severity.Critical") > 0) ||
-                (responseJson.has("severity.High") && responseJson.getInt("severity.High") > 0) ||
-                (responseJson.has("severity.Medium") && responseJson.getInt("severity.Medium") > 0) ||
-                (responseJson.has("severity.Low") && responseJson.getInt("severity.Low") > 0)) {
+        } else if ((responseJson.has("severity.Critical") && responseJson.getInt("severity.Critical") > 0)
+                || (responseJson.has("severity.High") && responseJson.getInt("severity.High") > 0)
+                || (responseJson.has("severity.Medium") && responseJson.getInt("severity.Medium") > 0)
+                || (responseJson.has("severity.Low") && responseJson.getInt("severity.Low") > 0)) {
             isSeverityBased = true;
         }
 
         // Determine if risk-based by checking if any otherProperties value is > 0
         if (responseJson.has("otherProperties") && responseJson.optJSONObject("otherProperties") != null) {
             JSONObject riskProperties = responseJson.getJSONObject("otherProperties");
-            if ((riskProperties.has("VERY_POOR") && riskProperties.getInt("VERY_POOR") > 0) ||
-                    (riskProperties.has("POOR") && riskProperties.getInt("POOR") > 0) ||
-                    (riskProperties.has("FAIR") && riskProperties.getInt("FAIR") > 0) ||
-                    (riskProperties.has("GOOD") && riskProperties.getInt("GOOD") > 0)) {
+            if ((riskProperties.has("VERY_POOR") && riskProperties.getInt("VERY_POOR") > 0)
+                    || (riskProperties.has("POOR") && riskProperties.getInt("POOR") > 0)
+                    || (riskProperties.has("FAIR") && riskProperties.getInt("FAIR") > 0)
+                    || (riskProperties.has("GOOD") && riskProperties.getInt("GOOD") > 0)) {
                 isRiskBased = true;
             }
-        } else if ((responseJson.has("otherProperties.VERY_POOR") && responseJson.getInt("otherProperties.VERY_POOR") > 0) ||
-                (responseJson.has("otherProperties.POOR") && responseJson.getInt("otherProperties.POOR") > 0) ||
-                (responseJson.has("otherProperties.FAIR") && responseJson.getInt("otherProperties.FAIR") > 0) ||
-                (responseJson.has("otherProperties.GOOD") && responseJson.getInt("otherProperties.GOOD") > 0)) {
+        } else if ((responseJson.has("otherProperties.VERY_POOR")
+                        && responseJson.getInt("otherProperties.VERY_POOR") > 0)
+                || (responseJson.has("otherProperties.POOR") && responseJson.getInt("otherProperties.POOR") > 0)
+                || (responseJson.has("otherProperties.FAIR") && responseJson.getInt("otherProperties.FAIR") > 0)
+                || (responseJson.has("otherProperties.GOOD") && responseJson.getInt("otherProperties.GOOD") > 0)) {
             isRiskBased = true;
         }
 
@@ -186,7 +206,9 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
             } else {
                 // Handle flattened severity format
                 if (responseJson.has("severity.Critical") && responseJson.getInt("severity.Critical") > 0) {
-                    findingsScope.append(responseJson.getInt("severity.Critical")).append(" Critical, ");
+                    findingsScope
+                            .append(responseJson.getInt("severity.Critical"))
+                            .append(" Critical, ");
                     hasFindings = true;
                 }
                 if (responseJson.has("severity.High") && responseJson.getInt("severity.High") > 0) {
@@ -225,20 +247,29 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
                 }
             } else {
                 // Handle flattened otherProperties format
-                if (responseJson.has("otherProperties.VERY_POOR") && responseJson.getInt("otherProperties.VERY_POOR") > 0) {
-                    findingsScope.append(responseJson.getInt("otherProperties.VERY_POOR")).append(" Very Poor, ");
+                if (responseJson.has("otherProperties.VERY_POOR")
+                        && responseJson.getInt("otherProperties.VERY_POOR") > 0) {
+                    findingsScope
+                            .append(responseJson.getInt("otherProperties.VERY_POOR"))
+                            .append(" Very Poor, ");
                     hasFindings = true;
                 }
                 if (responseJson.has("otherProperties.POOR") && responseJson.getInt("otherProperties.POOR") > 0) {
-                    findingsScope.append(responseJson.getInt("otherProperties.POOR")).append(" Poor, ");
+                    findingsScope
+                            .append(responseJson.getInt("otherProperties.POOR"))
+                            .append(" Poor, ");
                     hasFindings = true;
                 }
                 if (responseJson.has("otherProperties.FAIR") && responseJson.getInt("otherProperties.FAIR") > 0) {
-                    findingsScope.append(responseJson.getInt("otherProperties.FAIR")).append(" Fair, ");
+                    findingsScope
+                            .append(responseJson.getInt("otherProperties.FAIR"))
+                            .append(" Fair, ");
                     hasFindings = true;
                 }
                 if (responseJson.has("otherProperties.GOOD") && responseJson.getInt("otherProperties.GOOD") > 0) {
-                    findingsScope.append(responseJson.getInt("otherProperties.GOOD")).append(" Good");
+                    findingsScope
+                            .append(responseJson.getInt("otherProperties.GOOD"))
+                            .append(" Good");
                     hasFindings = true;
                 }
             }
@@ -262,7 +293,9 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
             // Get the value as an Object first
             Object reasonObj = responseJson.get("failureReasonText");
             // Only use it if it's not null and it's a non-empty string
-            if (reasonObj != null && !reasonObj.toString().equals("null") && !reasonObj.toString().isEmpty()) {
+            if (reasonObj != null
+                    && !reasonObj.toString().equals("null")
+                    && !reasonObj.toString().isEmpty()) {
                 reason = reasonObj.toString();
             }
         }
@@ -270,10 +303,11 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
 
         String buildNumber = String.valueOf(run.getNumber());
         String jobName = run.getParent().getFullName(); // Get the job name
-        String baseDetailsLink = responseJson.optString("detailsLink",
-                responseJson.optString("link", "https://app.armorcode.com/client/integrations/jenkins"));
-        String detailsLink = baseDetailsLink + (baseDetailsLink.contains("?") ? "&" : "?") +
-                "filters=" + URLEncoder.encode("{\"buildNumber\":[\"" + buildNumber + "\"],\"jobName\":[\"" + jobName + "\"]}", "UTF-8");
+        String baseDetailsLink = responseJson.optString(
+                "detailsLink", responseJson.optString("link", "https://app.armorcode.com/client/integrations/jenkins"));
+        String detailsLink = baseDetailsLink + (baseDetailsLink.contains("?") ? "&" : "?") + "filters="
+                + URLEncoder.encode(
+                        "{\"buildNumber\":[\"" + buildNumber + "\"],\"jobName\":[\"" + jobName + "\"]}", StandardCharsets.UTF_8);
         message.append("For more details, please refer to: ").append(detailsLink);
 
         return message.toString();
@@ -293,83 +327,89 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
     // Add transient keyword to prevent serialization
     private final transient JSONObject testResponseOverride = null;
 
-    private boolean isNullOrEmpty(String value) {
-        return value == null || value.trim().isEmpty();
+    private transient String testResponseString;
+
+    @DataBoundSetter
+    public void setTestResponseString(String testResponseString) {
+        this.testResponseString = testResponseString;
     }
 
-    private void validateSecurityPrerequisites(Run<?, ?> run, TaskListener listener, String token) throws InterruptedException {
+    public String getTestResponseString() {
+        return testResponseString;
+    }
+
+    private boolean isNullOrEmpty(Object value) {
+        if (value == null) return true;
+        if (value instanceof String) {
+            return ((String) value).trim().isEmpty();
+        }
+        if (value instanceof java.util.Collection) {
+            return ((java.util.Collection<?>) value).isEmpty();
+        }
+        return value.toString().trim().isEmpty();
+    }
+
+    private void validateSecurityPrerequisites(Run<?, ?> run, TaskListener listener, String token)
+            throws AbortException {
         // Strict parameter validation
-        if (isNullOrEmpty(product) || isNullOrEmpty(subProduct) || isNullOrEmpty(env)) {
-//            listener.getLogger().println("[SECURITY ERROR] Missing required security parameters");
-            run.setResult(Result.FAILURE);
-            throw new InterruptedException("Incomplete security configuration");
+        if (isNullOrEmpty(product) || isNullOrEmpty(subProducts) || isNullOrEmpty(env)) {
+            throw new AbortException("Incomplete security configuration");
         }
 
         if (isNullOrEmpty(token)) {
-//            listener.getLogger().println("[SECURITY CRITICAL] No security token found");
-            run.setResult(Result.FAILURE);
-            throw new InterruptedException("Missing security authentication");
+            throw new AbortException("Missing security authentication");
         }
     }
-
-//    private void saveGateInfoToProperties(Run<?, ?> run, TaskListener listener) {
-//        try {
-//            // Method 1: Add persistent parameters to the build
-//            run.addAction(new hudson.model.ParametersAction(
-//                    new hudson.model.StringParameterValue("ArmorCode.GateUsed", "true"),
-//                    new hudson.model.StringParameterValue("ArmorCode.Product", product),
-//                    new hudson.model.StringParameterValue("ArmorCode.SubProduct", subProduct),
-//                    new hudson.model.StringParameterValue("ArmorCode.Env", env),
-//                    new hudson.model.StringParameterValue("ArmorCode.GateResult", "PASSED")
-//            ));
-//
-//            // Method 2: Add a simple marker file to the build directory
-//            // In ArmorCodeReleaseGateBuilder.saveGateInfoToProperties
-//            try {
-//                FilePath marker = new FilePath(run.getRootDir()).child("armorcode-gate-used.txt");
-//                marker.write(String.format("product=%s\nsubProduct=%s\nenv=%s",
-//                        product, subProduct, env), "UTF-8");
-//
-//            } catch (Exception e) {
-//                e.printStackTrace(listener.getLogger());
-//            }
-//
-//            // Force save to ensure it's all persisted
-//            run.save();
-//
-//        } catch (Exception e) {
-//            // Just log, don't fail the build
-//            e.printStackTrace(listener.getLogger());
-//        }
-//    }
 
     /**
      * Determines how to handle a FAILED status depending on the mode.
      */
+    private void saveGateInfoToProperties(Run<?, ?> run, String gateResult) {
+        List<ParameterValue> newParams = new ArrayList<>();
+        newParams.add(new StringParameterValue("ArmorCode.GateUsed", "true"));
+        newParams.add(new StringParameterValue("ArmorCode.Product", product));
+        newParams.add(new StringParameterValue("ArmorCode.SubProducts", subProducts.toString()));
+        newParams.add(new StringParameterValue("ArmorCode.Env", env));
+        newParams.add(new StringParameterValue("ArmorCode.GateResult", gateResult));
+
+        List<String> safeParameterNames = new ArrayList<>();
+        safeParameterNames.add("ArmorCode.GateUsed");
+        safeParameterNames.add("ArmorCode.Product");
+        safeParameterNames.add("ArmorCode.SubProducts");
+        safeParameterNames.add("ArmorCode.Env");
+        safeParameterNames.add("ArmorCode.GateResult");
+
+        run.addAction(new ParametersAction(newParams, safeParameterNames));
+    }
+
     private void handleFailureMode(Run<?, ?> run, TaskListener listener) throws InterruptedException, AbortException {
         if ("block".equalsIgnoreCase(mode)) {
             listener.getLogger().println("[BLOCK] SLA check FAILED => Terminating build with failure.");
             run.setResult(Result.FAILURE);
 
-            CauseOfInterruption.UserInterruption cause = new CauseOfInterruption.UserInterruption("ArmorCode release gate failed: Security check did not pass");
+            CauseOfInterruption.UserInterruption cause = new CauseOfInterruption.UserInterruption(
+                    "ArmorCode release gate failed: Security check did not pass");
             run.addAction(new InterruptedBuildAction(Collections.singleton(cause)));
 
             throw new QuitException("__ARMORCODE_ENFORCE_FAILURE__");
-        }
-        else if ("warn".equalsIgnoreCase(mode)) {
-            listener.getLogger().println("[WARN] SLA check FAILED but 'warn' mode is active => Marking build as UNSTABLE and continuing...");
+        } else if ("warn".equalsIgnoreCase(mode)) {
+            listener.getLogger()
+                    .println(
+                            "[WARN] SLA check FAILED but 'warn' mode is active => Marking build as UNSTABLE and continuing...");
             run.setResult(Result.UNSTABLE);
         } else if (testMode) {
             listener.getLogger().println("[TEST MODE] Maximum retries reached; forcing build success for testing.");
             run.setResult(Result.SUCCESS);
         } else {
-            listener.getLogger().println("[BLOCK] Release gate is running in BLOCK mode => Terminating build with failure.");
+            listener.getLogger()
+                    .println("[BLOCK] Release gate is running in BLOCK mode => Terminating build with failure.");
 
             // Force ABORTED result which typically can't be caught/overridden in pipelines
             run.setResult(Result.FAILURE);
 
             // Throw the error that will terminate execution
-            CauseOfInterruption.UserInterruption cause = new CauseOfInterruption.UserInterruption("ArmorCode release gate failed: Security check did not pass");
+            CauseOfInterruption.UserInterruption cause = new CauseOfInterruption.UserInterruption(
+                    "ArmorCode release gate failed: Security check did not pass");
             throw new FlowInterruptedException(Result.FAILURE, cause);
         }
     }
@@ -380,8 +420,12 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
      * or continues if an SLA violation is found.
      */
     @Override
-    public void perform(@NonNull Run<?, ?> run, @NonNull FilePath workspace, @NonNull Launcher launcher, @NonNull TaskListener listener)
-            throws InterruptedException, Error {
+    public void perform(
+            @NonNull Run<?, ?> run,
+            @NonNull FilePath workspace,
+            @NonNull Launcher launcher,
+            @NonNull TaskListener listener)
+            throws InterruptedException, Error, AbortException {
 
         // Gather Jenkins context info
         final String buildNumber = String.valueOf(run.getNumber());
@@ -390,7 +434,7 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
         // Get global config if available
         String apiBaseUrl = targetUrl;
         ArmorCodeGlobalConfig globalConfig = ArmorCodeGlobalConfig.get();
-        if (globalConfig != null && apiBaseUrl.equals("https://app.armorcode.com/client/build")) {
+        if (globalConfig != null && Objects.equals(apiBaseUrl, "https://app.armorcode.com/client/build")) {
             // Only use global config if user hasn't explicitly set a different URL
             apiBaseUrl = globalConfig.getBaseUrl();
         }
@@ -399,47 +443,51 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
         validateSecurityPrerequisites(run, listener, token);
 
         String jobUrl = run.getParent().getAbsoluteUrl();
-        if (jobUrl == null && jobUrl.isEmpty()) {
+        if (jobUrl == null || jobUrl.isEmpty()) {
             // Only use fallback if Jenkins API fails
-            String jenkinsRootUrl = jenkins.model.JenkinsLocationConfiguration.get().getUrl();
+            String jenkinsRootUrl =
+                    jenkins.model.JenkinsLocationConfiguration.get().getUrl();
             if (jenkinsRootUrl != null && !jenkinsRootUrl.isEmpty()) {
                 jobUrl = jenkinsRootUrl + "/job/" + jobName + "/";
             } else {
-                jobUrl ="http://localhost:8080/job/" + jobName + "/";
+                listener.getLogger().println("[WARN] Could not determine Jenkins job URL. Please configure the Jenkins URL in the Jenkins global configuration.");
+                jobUrl = "";
             }
         }
 
-
         // Log initial context
         listener.getLogger().println("=== Starting ArmorCode Release Gate Check ===");
-        listener.getLogger().printf(
-                "product=%s, subProduct=%s, env=%s, maxRetries=%d, mode=%s%n",
-                product, subProduct, env, maxRetries, mode
-        );
 
         // Poll up to maxRetries times
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
                 // Process response - either from test override or from actual API call
                 JSONObject json;
+                if (testMode && testResponseString != null && !testResponseString.isEmpty()) {
+                    json = (JSONObject) JSONSerializer.toJSON(testResponseString);
+                } else {
                     // Make the HTTP POST request and parse the response
-                String responseStr = postArmorCodeRequest(listener,token, buildNumber, jobName, attempt, maxRetries, apiBaseUrl, jobUrl);
-                json = (JSONObject) JSONSerializer.toJSON(responseStr);
+                    String responseStr = postArmorCodeRequest(
+                            listener, token, buildNumber, jobName, attempt, maxRetries, apiBaseUrl, jobUrl);
+                    json = (JSONObject) JSONSerializer.toJSON(responseStr);
+                }
                 String status = json.optString("status", "UNKNOWN");
                 listener.getLogger().println("=== ArmorCode Release Gate ===");
                 listener.getLogger().println("Status: " + status);
 
                 if ("HOLD".equalsIgnoreCase(status)) {
                     // On HOLD => wait 20 seconds, then retry
-                    listener.getLogger().println("[INFO] SLA is on HOLD. Sleeping 20s...");
-                    listener.getLogger().println("[INFO] Sleeping 20 seconds before trying again. You can temporarily release the build from ArmorCode console");
-                    TimeUnit.SECONDS.sleep(20);
+                    listener.getLogger().println("[INFO] SLA is on HOLD. Sleeping " + retryDelay + "s...");
+                    listener.getLogger()
+                            .println(
+                                    "[INFO] Sleeping " + retryDelay + " seconds before trying again. You can temporarily release the build from ArmorCode console");
+                    TimeUnit.SECONDS.sleep(retryDelay);
                 } else if ("FAILED".equalsIgnoreCase(status)) {
                     // SLA failure => provide detailed error with links
-                    String detailedError = formatDetailedErrorMessage(run,json);
+                    String detailedError = formatDetailedErrorMessage(run, json);
                     listener.getLogger().println(detailedError);
-//                    saveGateInfoToProperties(run, listener);
-                    TimeUnit.SECONDS.sleep(20);
+                    saveGateInfoToProperties(run, "FAIL");
+                    TimeUnit.SECONDS.sleep(retryDelay);
                     handleFailureMode(run, listener);
                     if (!"warn".equalsIgnoreCase(mode)) {
                         return;
@@ -450,8 +498,8 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
                 } else {
                     // SUCCESS or RELEASE or other statuses => pass and break out
                     listener.getLogger().println("[INFO] ArmorCode check passed! Proceeding...");
-//                    saveGateInfoToProperties(run, listener);
-                    TimeUnit.SECONDS.sleep(20);
+                    saveGateInfoToProperties(run, "PASS");
+                    TimeUnit.SECONDS.sleep(retryDelay);
                     return;
                 }
             } catch (QuitException | FlowInterruptedException e) {
@@ -459,7 +507,10 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
                 throw e;
             } catch (AbortException e) {
                 run.setResult(Result.FAILURE);
-                throw new FlowInterruptedException(Result.FAILURE, new CauseOfInterruption.UserInterruption("ArmorCode release gate failed: Security check did not pass"));
+                throw new FlowInterruptedException(
+                        Result.FAILURE,
+                        new CauseOfInterruption.UserInterruption(
+                                "ArmorCode release gate failed: Security check did not pass"));
             } catch (Exception e) {
                 // Special handling for our enforcement signal
                 if (e.getMessage() != null && e.getMessage().equals("__ARMORCODE_ENFORCE_FAILURE__")) {
@@ -470,34 +521,63 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
 
                 // If we've tried all retries, fail the build
                 if (attempt == maxRetries) {
-                    run.setResult(Result.FAILURE);
-                    throw new InterruptedException("ArmorCode request error after maximum retries.");
+                    throw new AbortException("ArmorCode request error after maximum retries.");
                 }
 
                 // Otherwise wait and retry
-                listener.getLogger().println("Waiting 20s before retry...");
-                TimeUnit.SECONDS.sleep(20);
+                listener.getLogger().println("Waiting " + retryDelay + "s before retry...");
+                TimeUnit.SECONDS.sleep(retryDelay);
             }
         }
+
+        // If the loop completes without returning, it means max retries were hit on HOLD
+        listener.getLogger().println("[ERROR] ArmorCode check did not pass after " + maxRetries + " retries (last status was HOLD).");
+        saveGateInfoToProperties(run, "FAIL");
+        handleFailureMode(run, listener);
     }
 
     /**
      * Sends a POST request to ArmorCode's build validation endpoint
      * with the given parameters, then returns the raw JSON response.
      */
-    protected String postArmorCodeRequest(@NonNull TaskListener listener, String token, String buildNumber, String jobName, int current, int end, String apiUrl, String jobUrl)
+    protected String postArmorCodeRequest(
+            @NonNull TaskListener listener,
+            String token,
+            String buildNumber,
+            String jobName,
+            int current,
+            int end,
+            String apiUrl,
+            String jobUrl)
             throws Exception {
 
         // Format current and end as strings to match the curl command exactly
-        final String payload = String.format(
-                "{ \"env\": \"%s\", \"product\": \"%s\", \"subProduct\": \"%s\", " +
-                        "\"buildNumber\": \"%s\", \"jobName\": \"%s\", \"current\": \"%s\", \"end\": \"%s\" , \"jobURL\": \"%s\"}",
-                env, product, subProduct, buildNumber, jobName, String.valueOf(current), String.valueOf(end), jobUrl
-        );
+        String subProductsJsonArray;
+        if (subProducts == null) {
+            subProductsJsonArray = "[]";
+        } else if (subProducts instanceof java.util.List) {
+            subProductsJsonArray =
+                    net.sf.json.JSONArray.fromObject(subProducts).toString();
+        } else {
+            java.util.List<String> subProductList = java.util.Arrays.stream(((String) subProducts).split("\\r?\\n"))
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .collect(java.util.stream.Collectors.toList());
+            subProductsJsonArray =
+                    net.sf.json.JSONArray.fromObject(subProductList).toString();
+        }
 
-        // Log the request details for debugging
-        System.out.println("POST URL: " + apiUrl);
-        System.out.println("Payload: " + payload);
+        final String payload = String.format(
+                "{ \"env\": \"%s\", \"product\": \"%s\", \"subProducts\": %s, "
+                        + "\"buildNumber\": \"%s\", \"jobName\": \"%s\", \"current\": \"%s\", \"end\": \"%s\" , \"jobURL\": \"%s\"}",
+                env,
+                product,
+                subProductsJsonArray,
+                buildNumber,
+                jobName,
+                String.valueOf(current),
+                String.valueOf(end),
+                jobUrl);
 
         // Configure HTTP connection
         String uri = apiUrl + "/client/build";
@@ -511,27 +591,16 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
         // Set character encoding explicitly
         conn.setRequestProperty("Accept-Charset", "UTF-8");
 
-        String curlCommand = "curl --location '" + url + "\\\n" +
-                "--header 'Content-Type: application/json' \\\n" +
-                "--header 'Authorization: Bearer " + token.substring(0, 5) + "...' \\\n" +
-                "--header 'Accept-Charset: UTF-8' \\\n" +
-                "--data '" + payload.toString() + "'";
-
-        // Log the curl command to Jenkins console using the listener
-//        listener.getLogger().println("[ArmorCode] Equivalent curl command:");
-//        listener.getLogger().println(curlCommand);
-
         // Write payload with explicit UTF-8 encoding
-        conn.getOutputStream().write(payload.getBytes("UTF-8"));
+        conn.getOutputStream().write(payload.getBytes(StandardCharsets.UTF_8));
         conn.getOutputStream().flush();
 
         // Check response code before reading
         int responseCode = conn.getResponseCode();
-        System.out.println("Response code: " + responseCode);
 
         if (responseCode >= 200 && responseCode < 300) {
             // Success case
-            try (BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream(), "UTF-8"))) {
+            try (BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
                 StringBuilder sb = new StringBuilder();
                 String line;
                 while ((line = in.readLine()) != null) {
@@ -542,7 +611,8 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
         } else {
             // Error case - extract and log the error response
             StringBuilder errorResponse = new StringBuilder();
-            try (BufferedReader errorReader = new BufferedReader(new InputStreamReader(conn.getErrorStream(), "UTF-8"))) {
+            try (BufferedReader errorReader =
+                         new BufferedReader(new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = errorReader.readLine()) != null) {
                     errorResponse.append(line);
@@ -551,9 +621,8 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
                 errorResponse.append("Failed to read error stream: ").append(ex.getMessage());
             }
 
-            System.out.println("Error response: " + errorResponse.toString());
-            throw new IOException("Server returned HTTP response code: " + responseCode +
-                    " for URL: " + apiUrl + " with message: " + errorResponse);
+            throw new IOException("Server returned HTTP response code: " + responseCode + " for URL: " + apiUrl
+                    + " with message: " + errorResponse);
         }
     }
 
