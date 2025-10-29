@@ -51,12 +51,12 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
     private String mode = "block"; // "block" or "warn"
 
     // The target URL for the ArmorCode build validation endpoint
-    private String targetUrl = "https://app.armorcode.com/client/build";
+    private String targetUrl;
 
     // Optional setter so it can be configured from a Pipeline or via tests.
     @DataBoundSetter
     public void setTargetUrl(String targetUrl) {
-        this.targetUrl = targetUrl != null ? targetUrl : "https://app.armorcode.com/client/build";
+        this.targetUrl = targetUrl;
     }
 
     /**
@@ -432,11 +432,25 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
         final String jobName = run.getParent().getName();
 
         // Get global config if available
-        String apiBaseUrl = targetUrl;
+        String apiBaseUrl = targetUrl; // from the job config
         ArmorCodeGlobalConfig globalConfig = ArmorCodeGlobalConfig.get();
-        if (globalConfig != null && Objects.equals(apiBaseUrl, "https://app.armorcode.com/client/build")) {
-            // Only use global config if user hasn't explicitly set a different URL
-            apiBaseUrl = globalConfig.getBaseUrl();
+
+        // If the job-specific URL is not provided, use the global one.
+        if (apiBaseUrl == null || apiBaseUrl.trim().isEmpty()) {
+            if (globalConfig != null) {
+                apiBaseUrl = globalConfig.getBaseUrl();
+            }
+        }
+
+        // If no URL is configured anywhere, use the default.
+        if (apiBaseUrl == null || apiBaseUrl.trim().isEmpty()) {
+            apiBaseUrl = "https://app.armorcode.com";
+        }
+
+        // Now, construct the final URL with the /client/build path.
+        String finalUrl = apiBaseUrl;
+        if (!finalUrl.endsWith("/client/build")) {
+            finalUrl += "/client/build";
         }
 
         final String token = CredentialsUtils.getArmorCodeToken(run);
@@ -468,7 +482,7 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
                 } else {
                     // Make the HTTP POST request and parse the response
                     String responseStr = postArmorCodeRequest(
-                            listener, token, buildNumber, jobName, attempt, maxRetries, apiBaseUrl, jobUrl);
+                            listener, token, buildNumber, jobName, attempt, maxRetries, finalUrl, jobUrl);
                     json = (JSONObject) JSONSerializer.toJSON(responseStr);
                 }
                 String status = json.optString("status", "UNKNOWN");
@@ -580,8 +594,7 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
                 jobUrl);
 
         // Configure HTTP connection
-        String uri = apiUrl + "/client/build";
-        URL url = new URL(uri);
+        URL url = new URL(apiUrl);
         HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         conn.setRequestMethod("POST");
         conn.setRequestProperty("Content-Type", "application/json");
