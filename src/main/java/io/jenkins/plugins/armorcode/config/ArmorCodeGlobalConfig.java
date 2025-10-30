@@ -128,11 +128,13 @@ public class ArmorCodeGlobalConfig extends GlobalConfiguration {
         return jobName.matches(includeJobsPattern);
     }
 
-    public FormValidation doCheckBaseUrl(@QueryParameter String value) {
-        if (value.isEmpty()) {
+    @POST
+    public FormValidation doCheckBaseUrl(@QueryParameter("baseUrl") String baseUrl) {
+        Jenkins.get().checkPermission(Jenkins.ADMINISTER);
+        if (baseUrl.isEmpty()) {
             return FormValidation.error("Base URL must not be empty");
         }
-        if (!value.startsWith("https://")) {
+        if (!baseUrl.startsWith("https://")) {
             return FormValidation.error("Base URL must start with https://");
         }
         return FormValidation.ok();
@@ -140,6 +142,7 @@ public class ArmorCodeGlobalConfig extends GlobalConfiguration {
 
     @POST
     public FormValidation doTestConnection(@QueryParameter String baseUrl) {
+        Jenkins.get().checkPermission(Jenkins.ADMINISTER);
         if (baseUrl.isEmpty()) {
             return FormValidation.error("Base URL is required");
         }
@@ -183,6 +186,7 @@ public class ArmorCodeGlobalConfig extends GlobalConfiguration {
      */
     @POST
     public FormValidation doCheckCronExpression(@QueryParameter String value) {
+        Jenkins.get().checkPermission(Jenkins.ADMINISTER);
         if (value == null || value.trim().isEmpty()) {
             return FormValidation.error("Cron Expression must not be empty");
         }

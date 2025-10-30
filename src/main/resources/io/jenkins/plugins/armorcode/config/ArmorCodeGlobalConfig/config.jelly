@@ -4,6 +4,7 @@
         <f:entry title="ArmorCode Base URL" field="baseUrl"
                  description="Base URL for the ArmorCode instance (e.g., https://app.armorcode.com)">
             <f:textbox />
+            <f:validateButton title="Check Base URL" progress="Checking..." method="checkBaseUrl" with="baseUrl" />
         </f:entry>
 
         <f:entry title="Enable Discovery" field="monitorBuilds">
