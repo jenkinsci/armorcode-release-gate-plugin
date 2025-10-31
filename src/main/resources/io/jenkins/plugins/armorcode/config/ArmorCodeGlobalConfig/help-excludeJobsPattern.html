@@ -1,0 +1,13 @@
+<div>
+    <p>Controls which jobs are excluded from monitoring by ArmorCode:</p>
+    <ul>
+        <li>Uses regular expressions for pattern matching.</li>
+        <li>Separate multiple patterns with commas.</li>
+        <li>If a job matches both an include and an exclude pattern, it will be excluded.</li>
+    </ul>
+    <p>Examples:</p>
+    <ul>
+        <li><code>.*test.*</code> - Exclude jobs with "test" in the name.</li>
+        <li><code>dev-.*,staging-.*</code> - Exclude jobs starting with "dev-" or "staging-".</li>
+    </ul>
+</div>
