@@ -4,7 +4,6 @@ import antlr.ANTLRException;
 import hudson.Extension;
 import hudson.scheduler.CronTab;
 import hudson.util.FormValidation;
-import io.jenkins.plugins.armorcode.ArmorCodeJobDiscovery;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import jenkins.model.GlobalConfiguration;
@@ -177,8 +176,7 @@ public class ArmorCodeGlobalConfig extends GlobalConfiguration {
             this.cronExpression = cronExpression;
         }
         save();
-
-        Jenkins.get().getExtensionList(ArmorCodeJobDiscovery.class).get(0).reschedule();
+        // Note: No need to reschedule - the AsyncPeriodicWork runs every minute and checks the cron expression
     }
 
     /**
