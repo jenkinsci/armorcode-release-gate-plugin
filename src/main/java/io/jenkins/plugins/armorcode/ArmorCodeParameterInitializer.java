@@ -1,10 +1,8 @@
 package io.jenkins.plugins.armorcode;
 
-import hudson.Extension;
 import hudson.init.InitMilestone;
 import hudson.init.Initializer;
 
-@Extension
 public class ArmorCodeParameterInitializer {
 
     @Initializer(before = InitMilestone.PLUGINS_STARTED)

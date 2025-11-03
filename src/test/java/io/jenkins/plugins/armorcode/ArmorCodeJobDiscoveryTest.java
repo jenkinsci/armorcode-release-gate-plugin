@@ -32,7 +32,6 @@ public class ArmorCodeJobDiscoveryTest {
     private Method shouldMonitorJobMethod;
     private Method isUsingArmorCodePluginMethod;
     private Method collectJobsDataMethod;
-    private Method getIntervalFromCronMethod;
 
     @Before
     public void setUp() throws Exception {
@@ -41,46 +40,42 @@ public class ArmorCodeJobDiscoveryTest {
                 "shouldMonitorJob", String.class, String.class, String.class);
         shouldMonitorJobMethod.setAccessible(true);
 
-        isUsingArmorCodePluginMethod = ArmorCodeJobDiscovery.class.getDeclaredMethod(
-                "isUsingArmorCodePlugin", hudson.model.Job.class);
+        isUsingArmorCodePluginMethod =
+                ArmorCodeJobDiscovery.class.getDeclaredMethod("isUsingArmorCodePlugin", hudson.model.Job.class);
         isUsingArmorCodePluginMethod.setAccessible(true);
 
         collectJobsDataMethod = ArmorCodeJobDiscovery.class.getDeclaredMethod(
                 "collectJobsData", ArmorCodeGlobalConfig.class, TaskListener.class);
         collectJobsDataMethod.setAccessible(true);
-
-        getIntervalFromCronMethod = ArmorCodeJobDiscovery.class.getDeclaredMethod(
-                "getIntervalFromCron", String.class);
-        getIntervalFromCronMethod.setAccessible(true);
     }
 
     @Test
     public void testShouldMonitorJob() throws Exception {
         // Test case 1: No patterns, should include all
-        assertTrue("Should include with no patterns",
-                (boolean) shouldMonitorJobMethod.invoke(discovery, "any-job", "", ""));
+        assertTrue("Should include with no patterns", (boolean)
+                shouldMonitorJobMethod.invoke(discovery, "any-job", "", ""));
 
         // Test case 2: Include pattern matches
-        assertTrue("Should include when matching include pattern",
-                (boolean) shouldMonitorJobMethod.invoke(discovery, "prod-job-1", "prod-.*", ""));
+        assertTrue("Should include when matching include pattern", (boolean)
+                shouldMonitorJobMethod.invoke(discovery, "prod-job-1", "prod-.*", ""));
 
         // Test case 3: Include pattern does not match
-        assertFalse("Should exclude when not matching include pattern",
-                (boolean) shouldMonitorJobMethod.invoke(discovery, "dev-job-1", "prod-.*", ""));
+        assertFalse("Should exclude when not matching include pattern", (boolean)
+                shouldMonitorJobMethod.invoke(discovery, "dev-job-1", "prod-.*", ""));
 
         // Test case 4: Exclude pattern matches
-        assertFalse("Should exclude when matching exclude pattern",
-                (boolean) shouldMonitorJobMethod.invoke(discovery, "test-job-1", "", "test-.*" ) );
+        assertFalse("Should exclude when matching exclude pattern", (boolean)
+                shouldMonitorJobMethod.invoke(discovery, "test-job-1", "", "test-.*"));
 
         // Test case 5: Both include and exclude patterns match (exclude takes precedence)
-        assertFalse("Should exclude when both patterns match",
-                (boolean) shouldMonitorJobMethod.invoke(discovery, "prod-test-job", "prod-.*", ".*-test-.*" ) );
-        
+        assertFalse("Should exclude when both patterns match", (boolean)
+                shouldMonitorJobMethod.invoke(discovery, "prod-test-job", "prod-.*", ".*-test-.*"));
+
         // Test case 6: Include all, exclude some
-        assertTrue("Should include if not matching exclude",
-                (boolean) shouldMonitorJobMethod.invoke(discovery, "prod-job-1", "", "test-.*" ) );
-        assertFalse("Should exclude if matching exclude",
-                (boolean) shouldMonitorJobMethod.invoke(discovery, "test-job-1", "", "test-.*" ) );
+        assertTrue("Should include if not matching exclude", (boolean)
+                shouldMonitorJobMethod.invoke(discovery, "prod-job-1", "", "test-.*"));
+        assertFalse("Should exclude if matching exclude", (boolean)
+                shouldMonitorJobMethod.invoke(discovery, "test-job-1", "", "test-.*"));
     }
 
     @Test
@@ -93,10 +88,10 @@ public class ArmorCodeJobDiscoveryTest {
         FreeStyleProject projectWithoutPlugin = jenkins.createFreeStyleProject("freestyle-without-plugin");
 
         // Test
-        assertTrue("Should detect plugin in Freestyle project with builder",
-                (boolean) isUsingArmorCodePluginMethod.invoke(discovery, projectWithPlugin));
-        assertFalse("Should not detect plugin in Freestyle project without builder",
-                (boolean) isUsingArmorCodePluginMethod.invoke(discovery, projectWithoutPlugin));
+        assertTrue("Should detect plugin in Freestyle project with builder", (boolean)
+                isUsingArmorCodePluginMethod.invoke(discovery, projectWithPlugin));
+        assertFalse("Should not detect plugin in Freestyle project without builder", (boolean)
+                isUsingArmorCodePluginMethod.invoke(discovery, projectWithoutPlugin));
     }
 
     @Test
@@ -104,32 +99,26 @@ public class ArmorCodeJobDiscoveryTest {
         // Create a credential
         String tokenValue = "my-secret-token";
         StringCredentialsImpl credential = new StringCredentialsImpl(
-                CredentialsScope.GLOBAL,
-                "ARMORCODE_TOKEN",
-                "dummy token credential",
-                Secret.fromString(tokenValue)
-        );
+                CredentialsScope.GLOBAL, "ARMORCODE_TOKEN", "dummy token credential", Secret.fromString(tokenValue));
         SystemCredentialsProvider.getInstance().getCredentials().add(credential);
         SystemCredentialsProvider.getInstance().save();
 
         // Create a pipeline project with the ArmorCode step
+        // Don't run the build - just check if the config XML contains the step
         WorkflowJob pipelineWithPlugin = jenkins.createProject(WorkflowJob.class, "pipeline-with-plugin");
         pipelineWithPlugin.setDefinition(new CpsFlowDefinition(
-            "node { armorcodeReleaseGate(product: '1', subProducts: '1', env: '1', testMode: true, testResponseString: '{\"status\":\"SUCCESS\"}') }", true));
+                "node { armorcodeReleaseGate(product: '1', subProducts: ['1'], env: '1') }",
+                true));
 
         // Create a pipeline project without the ArmorCode step
         WorkflowJob pipelineWithoutPlugin = jenkins.createProject(WorkflowJob.class, "pipeline-without-plugin");
         pipelineWithoutPlugin.setDefinition(new CpsFlowDefinition("node { echo 'hello' }", true));
 
-        // We need to run a build for the log-based detection to work
-        jenkins.buildAndAssertSuccess(pipelineWithPlugin);
-        jenkins.buildAndAssertSuccess(pipelineWithoutPlugin);
-
         // Test
-        assertTrue("Should detect plugin in Pipeline project with step",
-                (boolean) isUsingArmorCodePluginMethod.invoke(discovery, pipelineWithPlugin));
-        assertFalse("Should not detect plugin in Pipeline project without step",
-                (boolean) isUsingArmorCodePluginMethod.invoke(discovery, pipelineWithoutPlugin));
+        assertTrue("Should detect plugin in Pipeline project with step", (boolean)
+                isUsingArmorCodePluginMethod.invoke(discovery, pipelineWithPlugin));
+        assertFalse("Should not detect plugin in Pipeline project without step", (boolean)
+                isUsingArmorCodePluginMethod.invoke(discovery, pipelineWithoutPlugin));
     }
 
     @Test
@@ -137,11 +126,7 @@ public class ArmorCodeJobDiscoveryTest {
         // Create a credential
         String tokenValue = "my-secret-token";
         StringCredentialsImpl credential = new StringCredentialsImpl(
-                CredentialsScope.GLOBAL,
-                "ARMORCODE_TOKEN",
-                "dummy token credential",
-                Secret.fromString(tokenValue)
-        );
+                CredentialsScope.GLOBAL, "ARMORCODE_TOKEN", "dummy token credential", Secret.fromString(tokenValue));
         SystemCredentialsProvider.getInstance().getCredentials().add(credential);
         SystemCredentialsProvider.getInstance().save();
 
@@ -154,10 +139,10 @@ public class ArmorCodeJobDiscoveryTest {
         // Create jobs
         // 1. Should be included (matches include, not exclude, has plugin)
         FreeStyleProject job1 = jenkins.createFreeStyleProject("prod-job-1");
-        job1.getBuildersList().add(new ArmorCodeReleaseGateBuilder("1", "1", "1"));
-        ((ArmorCodeReleaseGateBuilder)job1.getBuildersList().get(0)).setTestMode(true);
-        ((ArmorCodeReleaseGateBuilder)job1.getBuildersList().get(0)).setTestResponseString("{\"status\":\"SUCCESS\"}");
-
+        ArmorCodeReleaseGateBuilderTest.MockArmorCodeReleaseGateBuilder mockBuilder =
+            new ArmorCodeReleaseGateBuilderTest.MockArmorCodeReleaseGateBuilder("1", "1", "1");
+        mockBuilder.setMockResponse("{\"status\":\"SUCCESS\"}");
+        job1.getBuildersList().add(mockBuilder);
 
         // 2. Should be excluded (matches exclude)
         FreeStyleProject job2 = jenkins.createFreeStyleProject("prod-job-ignore");
@@ -204,40 +189,21 @@ public class ArmorCodeJobDiscoveryTest {
     public void testGetRecurrencePeriod() throws Exception {
         ArmorCodeGlobalConfig config = ArmorCodeGlobalConfig.get();
 
-        // Test case 1: Monitoring disabled
+        // Test case 1: Monitoring disabled - should return 1 hour
         config.setMonitorBuilds(false);
         config.save();
-        assertEquals("Should be 7 days if disabled", TimeUnit.DAYS.toMillis(7), discovery.getRecurrencePeriod());
-        
+        assertEquals(
+                "Should be 1 hour when disabled",
+                TimeUnit.HOURS.toMillis(1),
+                discovery.getRecurrencePeriod());
+
+        // Test case 2: Monitoring enabled - should return 1 minute (fixed interval)
+        // The actual execution is controlled by cron matching in execute()
         config.setMonitorBuilds(true);
         config.save();
-
-        // Test case 2: Empty cron expression (defaults to 24 hours)
-        config.setCronExpression("");
-        config.save();
-        assertEquals("Should default to 24 hours for empty cron", TimeUnit.HOURS.toMillis(24), discovery.getRecurrencePeriod());
-
-        // Test case 3: Every 15 minutes
-        config.setCronExpression("*/15 * * * *");
-        config.save();
-        assertEquals("Should be 15 minutes", TimeUnit.MINUTES.toMillis(15), discovery.getRecurrencePeriod());
-
-        // Test case 4: Invalid cron expression (defaults to 1 hour)
-        config.setCronExpression("invalid cron");
-        config.save();
-        assertEquals("Should default to 1 hour for invalid cron", TimeUnit.HOURS.toMillis(1), discovery.getRecurrencePeriod());
-    }
-
-    @Test
-    public void testGetIntervalFromCron() throws Exception {
-        // Test a cron for a specific time in the future
-        // Note: This test can be a bit flaky depending on when it's run.
-        // A more robust test would mock the current time.
-        // For now, we'll test a simple case.
-
-        // Every day at 3:30 AM
-        String cron = "30 3 * * *";
-        long interval = (long) getIntervalFromCronMethod.invoke(null, cron);
-        assertTrue("Interval should be positive", interval > 0);
+        assertEquals(
+                "Should be 1 minute when enabled",
+                TimeUnit.MINUTES.toMillis(1),
+                discovery.getRecurrencePeriod());
     }
 }

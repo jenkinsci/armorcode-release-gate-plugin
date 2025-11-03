@@ -18,24 +18,22 @@ import java.util.ArrayList;
 import java.util.Calendar;
 import java.util.Date;
 import java.util.List;
-import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import jenkins.model.Jenkins;
-import jenkins.util.Timer;
 import net.sf.json.JSONObject;
 
 /**
  * Periodic background task that discovers Jenkins jobs and sends their data to ArmorCode.
+ * The task runs every minute and checks if the current time matches the configured cron expression.
+ * This approach prevents multiple timers from running when the cron configuration changes.
  */
 @Extension
 public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
     private static final Logger LOGGER = Logger.getLogger(ArmorCodeJobDiscovery.class.getName());
 
-    // Track the scheduled task to prevent duplicates
-    private static ScheduledFuture<?> currentScheduledTask = null;
-    private static final Object TASK_SCHEDULE_LOCK = new Object();
+    private Calendar lastExecutionTime = null;
 
     /**
      * Constructor with name for the background task.
@@ -45,121 +43,123 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
     }
 
     /**
-     * Force reschedule of the task with proper cleanup of previous schedule.
-     */
-    public void reschedule() {
-        LOGGER.info("Forcing reschedule of ArmorCode job discovery");
-
-        // Get current interval from config
-        long interval = getRecurrencePeriod();
-
-        // Use a static lock to protect the static field
-        synchronized (TASK_SCHEDULE_LOCK) {
-            // Cancel any existing scheduled task first
-            if (currentScheduledTask != null && !currentScheduledTask.isDone()) {
-                LOGGER.info("Cancelling previous scheduled task");
-                currentScheduledTask.cancel(false);
-                currentScheduledTask = null;
-            }
-
-            // Schedule a new task
-            currentScheduledTask = Timer.get().scheduleWithFixedDelay(this, 0, interval, TimeUnit.MILLISECONDS);
-        } // End of synchronized block
-
-        // Log next scheduled run time
-        Calendar nextRun = Calendar.getInstance();
-        nextRun.setTimeInMillis(System.currentTimeMillis() + interval);
-        LOGGER.info("Next ArmorCode discovery run scheduled at " + nextRun.getTime() + " with interval "
-                + (interval / 1000) + " seconds");
-    }
-
-    /**
-     * Returns the recurrence period in milliseconds.
-     * Provides special handling for common cron patterns.
+     * Returns a fixed recurrence period of 1 minute.
+     * The actual execution logic in execute() checks if the cron expression matches the current time.
+     * This prevents multiple timers when configuration changes and ensures accurate cron scheduling.
      */
     @Override
     public long getRecurrencePeriod() {
-        ArmorCodeGlobalConfig config = ArmorCodeGlobalConfig.get();
-
-        // If monitoring is disabled, use a long interval
-        if (!config.isMonitorBuilds()) {
-            LOGGER.fine("Job discovery is disabled, using long interval");
-            return TimeUnit.DAYS.toMillis(7);
-        }
-
-        String cronExpression = config.getCronExpression();
-        if (cronExpression == null || cronExpression.trim().isEmpty() || "H H * * *".equals(cronExpression.trim())) {
-            LOGGER.fine("No cron expression or default daily cron, using 24 hours schedule");
-            return TimeUnit.HOURS.toMillis(24);
-        }
-
-        // Handle specific cron patterns directly
-        if (cronExpression.matches("\\*/\\d+ \\* \\* \\* \\*")) {
-            // Pattern: */n * * * * (every n minutes)
-            try {
-                int minutes = Integer.parseInt(cronExpression.replaceAll("\\*/([0-9]+) .*", "$1"));
-                LOGGER.info("Using fixed " + minutes + "-minute interval for cron: " + cronExpression);
-                return TimeUnit.MINUTES.toMillis(minutes);
-            } catch (NumberFormatException e) {
-                LOGGER.log(Level.WARNING, "Failed to parse minutes from cron: " + cronExpression, e);
-            }
-        }
-
-        // For other cron expressions, calculate the interval dynamically
         try {
-            long interval = getIntervalFromCron(cronExpression);
-            Calendar nextRun = Calendar.getInstance();
-            nextRun.setTimeInMillis(System.currentTimeMillis() + interval);
+            ArmorCodeGlobalConfig config = ArmorCodeGlobalConfig.get();
 
-            LOGGER.info("Next ArmorCode discovery run scheduled at " + nextRun.getTime() + " based on cron: "
-                    + cronExpression);
+            // Config might be null during plugin initialization
+            if (config == null) {
+                LOGGER.fine("[ArmorCode] Global config not yet loaded, using default 1-minute interval");
+                return TimeUnit.MINUTES.toMillis(1);
+            }
 
-            return interval;
+            // If monitoring is disabled, use a longer interval to reduce overhead
+            if (!config.isMonitorBuilds()) {
+                return TimeUnit.HOURS.toMillis(1);
+            }
+
+            // Run every minute to check cron expression
+            return TimeUnit.MINUTES.toMillis(1);
         } catch (Exception e) {
-            LOGGER.log(
-                    Level.WARNING,
-                    "Error calculating schedule from cron expression: " + cronExpression + ". Defaulting to hourly.",
-                    e);
-            return TimeUnit.HOURS.toMillis(1);
+            LOGGER.log(Level.WARNING, "[ArmorCode] Error getting recurrence period", e);
+            return TimeUnit.MINUTES.toMillis(1);
         }
     }
 
     /**
-     * Calculate the interval between now and the next execution based on cron.
+     * Checks if the current time matches the configured cron expression.
+     * This prevents multiple executions within the same minute.
      */
-    private static long getIntervalFromCron(String cronExpression) throws Exception {
-        CronTab cronTab = new CronTab(cronExpression);
+    private boolean shouldExecuteNow(String cronExpression) {
+        try {
+            Calendar now = Calendar.getInstance();
 
-        // Get the current time and calculate next execution
-        Calendar now = Calendar.getInstance();
-        Calendar next = (Calendar) now.clone();
+            // Round down to the start of the current minute for comparison
+            Calendar currentMinute = (Calendar) now.clone();
+            currentMinute.set(Calendar.SECOND, 0);
+            currentMinute.set(Calendar.MILLISECOND, 0);
 
-        cronTab.ceil(next); // Get next execution time
+            // If we've already executed in this minute, skip
+            if (lastExecutionTime != null && lastExecutionTime.equals(currentMinute)) {
+                LOGGER.fine("[ArmorCode] Already executed in this minute, skipping");
+                return false;
+            }
 
-        // Calculate time difference in milliseconds - the minimum is 60 seconds
-        return Math.max(TimeUnit.SECONDS.toMillis(60), next.getTimeInMillis() - now.getTimeInMillis());
+            // Check if cron expression matches current time
+            CronTab cronTab = new CronTab(cronExpression);
+            Calendar previousSchedule = (Calendar) now.clone();
+            cronTab.floor(previousSchedule); // Get the most recent scheduled time
+
+            // Round down the previous schedule to the minute
+            previousSchedule.set(Calendar.SECOND, 0);
+            previousSchedule.set(Calendar.MILLISECOND, 0);
+
+            // If the most recent scheduled time matches the current minute, execute
+            if (previousSchedule.equals(currentMinute)) {
+                LOGGER.fine("[ArmorCode] Cron expression '" + cronExpression + "' matches current time "
+                        + String.format("%tF %<tT", currentMinute) + " - executing discovery");
+                lastExecutionTime = currentMinute;
+                return true;
+            }
+
+            LOGGER.fine("[ArmorCode] Cron expression '" + cronExpression + "' does not match current time "
+                    + String.format("%tF %<tT", currentMinute) + " (last scheduled: "
+                    + String.format("%tF %<tT", previousSchedule) + ")");
+            return false;
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Error checking cron schedule: " + cronExpression, e);
+            return false;
+        }
     }
 
     /**
      * Executes the periodic task with better error handling and logging.
+     * This is called by Jenkins' AsyncPeriodicWork framework every minute.
+     * It checks if the current time matches the cron expression before executing.
      */
     @Override
     protected void execute(TaskListener listener) {
-        LOGGER.info("[ArmorCode] Starting job discovery scan at " + new Date());
-
         try {
             ArmorCodeGlobalConfig config = ArmorCodeGlobalConfig.get();
 
-            // Skip if discovery is disabled
-            if (!config.isMonitorBuilds()) {
-                LOGGER.info("[ArmorCode] Job discovery is disabled in configuration");
+            // Config might be null during plugin initialization
+            if (config == null) {
+                LOGGER.fine("[ArmorCode] Global config not yet loaded, skipping discovery");
                 return;
             }
+
+            // Skip if discovery is disabled
+            if (!config.isMonitorBuilds()) {
+                LOGGER.fine("[ArmorCode] Job discovery is disabled in configuration");
+                return;
+            }
+
+            // Check if we should execute based on cron expression
+            String cronExpression = config.getCronExpression();
+            if (cronExpression == null || cronExpression.trim().isEmpty()) {
+                cronExpression = "H H * * 0"; // Default to weekly
+            }
+
+            // Check if current time matches cron - this logs at INFO level when match found
+            if (!shouldExecuteNow(cronExpression)) {
+                // Not time to execute yet, return silently
+                return;
+            }
+
+            // Time to execute - log and proceed
+            LOGGER.fine("[ArmorCode] Starting job discovery scan at " + new Date());
+            listener.getLogger().println("[ArmorCode] Starting job discovery scan");
 
             // Get ArmorCode token
             final String token = CredentialsUtils.getSystemToken();
             if (token == null) {
                 LOGGER.warning("[ArmorCode] No ArmorCode token found - skipping job discovery");
+                listener.getLogger().println("[ArmorCode] No ArmorCode token found - skipping job discovery");
                 return;
             }
 
@@ -167,20 +167,25 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
             List<JSONObject> jobsData = collectJobsData(config, listener);
 
             if (jobsData.isEmpty()) {
-                LOGGER.info("[ArmorCode] No matching jobs found during discovery");
+                LOGGER.fine("[ArmorCode] No matching jobs found during discovery");
+                listener.getLogger().println("[ArmorCode] No matching jobs found during discovery");
                 return;
             }
+
+            // Log collected job data at FINE level
+            LOGGER.fine("[ArmorCode] Collected " + jobsData.size() + " jobs for discovery");
 
             // Send data to ArmorCode in batches
             boolean success = sendJobsDataInBatches(config, token, jobsData, listener);
 
             if (success) {
-                LOGGER.info("[ArmorCode] Successfully sent job discovery data");
+                LOGGER.fine("[ArmorCode] Successfully sent " + jobsData.size() + " jobs to ArmorCode");
+                listener.getLogger().println("[ArmorCode] Successfully sent " + jobsData.size() + " jobs to ArmorCode");
             } else {
-                LOGGER.log(Level.WARNING, "Failed to send job discovery data");
+                LOGGER.warning("[ArmorCode] Failed to send job discovery data");
+                listener.getLogger().println("[ArmorCode] Failed to send job discovery data");
             }
 
-            // Log execution time
         } catch (Exception e) {
             listener.error("[ArmorCode] Error during job discovery. See Jenkins system log for details.");
             LOGGER.log(Level.SEVERE, "[ArmorCode] Error during job discovery", e);
@@ -232,7 +237,8 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
                 if (jenkinsRootUrl != null && !jenkinsRootUrl.isEmpty()) {
                     jobData.put("jobURL", jenkinsRootUrl + "job/" + jobName + "/");
                 } else {
-                    LOGGER.warning("[ArmorCode] Could not determine Jenkins job URL. Please configure the Jenkins URL in the Jenkins global configuration.");
+                    LOGGER.warning(
+                            "[ArmorCode] Could not determine Jenkins job URL. Please configure the Jenkins URL in the Jenkins global configuration.");
                     jobData.put("jobURL", "");
                 }
             }
@@ -393,55 +399,40 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
         }
 
         // Additional method specifically for multibranch pipeline projects
-        if (job.getFullName().contains("/")) {
-            // This might be a branch in a multibranch project
-            try {
-                // Try to get the parent job (the multibranch project itself)
-                String parentJobName =
-                        job.getFullName().substring(0, job.getFullName().lastIndexOf('/'));
-                Job<?, ?> parentJob = Jenkins.get().getItemByFullName(parentJobName, Job.class);
+        try {
+            // Get the parent using job.getParent() - works for folders and multibranch jobs
+            hudson.model.ItemGroup<?> parent = job.getParent();
 
-                if (parentJob != null) {
-                    // Check if the parent job's name or description mentions ArmorCode
-                    if (parentJob.getDescription() != null
-                            && (parentJob.getDescription().contains("ArmorCode")
-                                    || parentJob.getDescription().contains("armorcode"))) {
-                        return true;
-                    }
-
-                    // For multibranch pipelines, the Jenkins file might be in source control
-                    // and not directly accessible, so we need more heuristics
-                    if (parentJob.getClass().getName().contains("MultiBranchProject")) {
-                        // Check if other branches in the same project use ArmorCode
-                        for (Job<?, ?> siblingJob : Jenkins.get().getAllItems(Job.class)) {
-                            if (siblingJob != job && siblingJob.getFullName().startsWith(parentJobName + "/")) {
-                                try {
-                                    Run<?, ?> siblingBuild = siblingJob.getLastBuild();
-                                    if (siblingBuild != null) {
-                                        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
-                                                siblingBuild.getLogInputStream(), StandardCharsets.UTF_8))) {
-                                            String line;
-                                            while ((line = reader.readLine()) != null) {
-                                                if (line.contains("ArmorCode")
-                                                        || line.contains("armorcode")
-                                                        || line.contains("armorcodeReleaseGate")) {
-                                                    // If a sibling branch uses ArmorCode, this one likely does too
-                                                    return true;
-                                                }
-                                            }
+            // For multibranch pipelines, the parent is the multibranch project itself
+            if (parent.getClass().getName().contains("MultiBranchProject")) {
+                // Check if other branches in the same project use ArmorCode
+                for (Job<?, ?> siblingJob : Jenkins.get().getAllItems(Job.class)) {
+                    if (siblingJob != job && siblingJob.getParent() == parent) {
+                        try {
+                            Run<?, ?> siblingBuild = siblingJob.getLastBuild();
+                            if (siblingBuild != null) {
+                                try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                                        siblingBuild.getLogInputStream(), StandardCharsets.UTF_8))) {
+                                    String line;
+                                    while ((line = reader.readLine()) != null) {
+                                        if (line.contains("ArmorCode")
+                                                || line.contains("armorcode")
+                                                || line.contains("armorcodeReleaseGate")) {
+                                            // If a sibling branch uses ArmorCode, this one likely does too
+                                            return true;
                                         }
                                     }
-                                } catch (Exception e) {
-                                    // Just log and continue
-                                    LOGGER.log(Level.FINE, "Error checking sibling branch for " + job.getFullName(), e);
                                 }
                             }
+                        } catch (Exception e) {
+                            // Just log and continue
+                            LOGGER.log(Level.FINE, "Error checking sibling branch for " + job.getFullName(), e);
                         }
                     }
                 }
-            } catch (Exception e) {
-                LOGGER.log(Level.FINE, "Error checking parent job for " + job.getFullName(), e);
             }
+        } catch (Exception e) {
+            LOGGER.log(Level.FINE, "Error checking parent job for " + job.getFullName(), e);
         }
 
         return false;
@@ -487,7 +478,7 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
         }
 
         // Report overall results
-        LOGGER.info("[ArmorCode] Successfully sent " + successCount + " of " + totalJobs + " jobs to ArmorCode");
+        LOGGER.fine("[ArmorCode] Successfully sent " + successCount + " of " + totalJobs + " jobs to ArmorCode");
 
         return successCount == totalJobs;
     }
@@ -527,33 +518,38 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
             // Check response
             int responseCode = conn.getResponseCode();
             if (responseCode != 200) {
-                StringBuilder errorResponse = new StringBuilder();
+                String errorDetails = "";
                 try (BufferedReader errorReader =
                         new BufferedReader(new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
+                    StringBuilder errorResponse = new StringBuilder();
                     String line;
                     while ((line = errorReader.readLine()) != null) {
                         errorResponse.append(line);
                     }
+                    errorDetails = errorResponse.toString();
                 } catch (IOException ex) {
                     listener.error("[ArmorCode] Could not read error response: " + ex.getMessage());
                     LOGGER.log(Level.WARNING, "Could not read error response", ex);
                 }
 
-                LOGGER.log(Level.WARNING, "Batch send failed with HTTP " + responseCode);
+                LOGGER.log(
+                        Level.WARNING,
+                        "Batch send failed with HTTP " + responseCode
+                                + (errorDetails.isEmpty() ? "" : ": " + errorDetails));
                 return false;
             }
 
-            // Read successful response
-            StringBuilder response = new StringBuilder();
+            // Read successful response (for logging if needed)
             try (BufferedReader reader =
                     new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
                 String line;
+                StringBuilder response = new StringBuilder();
                 while ((line = reader.readLine()) != null) {
                     response.append(line);
                 }
+                LOGGER.fine("[ArmorCode] Batch sent successfully. Response: " + response.toString());
             }
 
-            LOGGER.info("[ArmorCode] Batch sent successfully.");
             return true;
 
         } catch (IOException e) {

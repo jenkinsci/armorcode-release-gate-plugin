@@ -16,8 +16,12 @@
         </f:entry>
 
         <f:advanced>
-            <f:entry title="Max Retries" field="maxRetries" description="Maximum number of times to check status before giving up">
-                <f:textbox />
+            <f:entry title="Max Retries" field="maxRetries" description="Maximum number of times to check status before giving up (default: 5)">
+                <f:number class="positive-number" default="5" />
+            </f:entry>
+
+            <f:entry title="Retry Delay (seconds)" field="retryDelay" description="Delay in seconds between retry attempts (default: 20)">
+                <f:number class="positive-number" default="20" />
             </f:entry>
 
             <f:entry title="Mode" field="mode" description="Behavior when security validation fails">

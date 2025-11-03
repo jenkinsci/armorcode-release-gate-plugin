@@ -5,12 +5,12 @@ import hudson.AbortException;
 import hudson.Extension;
 import hudson.FilePath;
 import hudson.Launcher;
-import hudson.model.Result;
-import hudson.model.Run;
-import hudson.model.TaskListener;
 import hudson.model.ParameterValue;
 import hudson.model.ParametersAction;
+import hudson.model.Result;
+import hudson.model.Run;
 import hudson.model.StringParameterValue;
+import hudson.model.TaskListener;
 import hudson.tasks.BuildStepDescriptor;
 import hudson.tasks.BuildStepMonitor;
 import hudson.tasks.Builder;
@@ -25,21 +25,19 @@ import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
-import java.util.Objects;
 import java.util.concurrent.TimeUnit;
-import jenkins.model.CauseOfInterruption;
-import jenkins.model.InterruptedBuildAction;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 import jenkins.tasks.SimpleBuildStep;
 import net.sf.json.JSONObject;
 import net.sf.json.JSONSerializer;
 import org.jenkinsci.Symbol;
-import org.jenkinsci.plugins.workflow.steps.FlowInterruptedException;
 import org.kohsuke.stapler.DataBoundConstructor;
 import org.kohsuke.stapler.DataBoundSetter;
 
 public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildStep {
+    private static final Logger LOGGER = Logger.getLogger(ArmorCodeReleaseGateBuilder.class.getName());
 
     // Required parameters
     private final String product;
@@ -72,7 +70,7 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
         this.subProducts = subProducts;
         this.env = env;
     }
-    
+
     /**
      * Optional parameter: how many times to retry the validation check.
      *
@@ -307,35 +305,11 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
                 "detailsLink", responseJson.optString("link", "https://app.armorcode.com/client/integrations/jenkins"));
         String detailsLink = baseDetailsLink + (baseDetailsLink.contains("?") ? "&" : "?") + "filters="
                 + URLEncoder.encode(
-                        "{\"buildNumber\":[\"" + buildNumber + "\"],\"jobName\":[\"" + jobName + "\"]}", StandardCharsets.UTF_8);
+                        "{\"buildNumber\":[\"" + buildNumber + "\"],\"jobName\":[\"" + jobName + "\"]}",
+                        StandardCharsets.UTF_8);
         message.append("For more details, please refer to: ").append(detailsLink);
 
         return message.toString();
-    }
-
-    private boolean testMode = false;
-
-    @DataBoundSetter
-    public void setTestMode(boolean testMode) {
-        this.testMode = testMode;
-    }
-
-    public boolean getTestMode() {
-        return testMode;
-    }
-
-    // Add transient keyword to prevent serialization
-    private final transient JSONObject testResponseOverride = null;
-
-    private transient String testResponseString;
-
-    @DataBoundSetter
-    public void setTestResponseString(String testResponseString) {
-        this.testResponseString = testResponseString;
-    }
-
-    public String getTestResponseString() {
-        return testResponseString;
     }
 
     private boolean isNullOrEmpty(Object value) {
@@ -382,35 +356,21 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
         run.addAction(new ParametersAction(newParams, safeParameterNames));
     }
 
-    private void handleFailureMode(Run<?, ?> run, TaskListener listener) throws InterruptedException, AbortException {
+    private void handleFailureMode(Run<?, ?> run, TaskListener listener) throws AbortException {
         if ("block".equalsIgnoreCase(mode)) {
             listener.getLogger().println("[BLOCK] SLA check FAILED => Terminating build with failure.");
             run.setResult(Result.FAILURE);
-
-            CauseOfInterruption.UserInterruption cause = new CauseOfInterruption.UserInterruption(
-                    "ArmorCode release gate failed: Security check did not pass");
-            run.addAction(new InterruptedBuildAction(Collections.singleton(cause)));
-
-            throw new QuitException("__ARMORCODE_ENFORCE_FAILURE__");
+            throw new AbortException("ArmorCode release gate failed: Security check did not pass");
         } else if ("warn".equalsIgnoreCase(mode)) {
             listener.getLogger()
                     .println(
                             "[WARN] SLA check FAILED but 'warn' mode is active => Marking build as UNSTABLE and continuing...");
             run.setResult(Result.UNSTABLE);
-        } else if (testMode) {
-            listener.getLogger().println("[TEST MODE] Maximum retries reached; forcing build success for testing.");
-            run.setResult(Result.SUCCESS);
         } else {
             listener.getLogger()
                     .println("[BLOCK] Release gate is running in BLOCK mode => Terminating build with failure.");
-
-            // Force ABORTED result which typically can't be caught/overridden in pipelines
             run.setResult(Result.FAILURE);
-
-            // Throw the error that will terminate execution
-            CauseOfInterruption.UserInterruption cause = new CauseOfInterruption.UserInterruption(
-                    "ArmorCode release gate failed: Security check did not pass");
-            throw new FlowInterruptedException(Result.FAILURE, cause);
+            throw new AbortException("ArmorCode release gate failed: Security check did not pass");
         }
     }
 
@@ -425,11 +385,11 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
             @NonNull FilePath workspace,
             @NonNull Launcher launcher,
             @NonNull TaskListener listener)
-            throws InterruptedException, Error, AbortException {
+            throws InterruptedException, AbortException {
 
         // Gather Jenkins context info
         final String buildNumber = String.valueOf(run.getNumber());
-        final String jobName = run.getParent().getName();
+        final String jobName = run.getParent().getFullName();
 
         // Get global config if available
         String apiBaseUrl = targetUrl; // from the job config
@@ -456,35 +416,31 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
         final String token = CredentialsUtils.getArmorCodeToken(run);
         validateSecurityPrerequisites(run, listener, token);
 
-        String jobUrl = run.getParent().getAbsoluteUrl();
-        if (jobUrl == null || jobUrl.isEmpty()) {
-            // Only use fallback if Jenkins API fails
-            String jenkinsRootUrl =
-                    jenkins.model.JenkinsLocationConfiguration.get().getUrl();
-            if (jenkinsRootUrl != null && !jenkinsRootUrl.isEmpty()) {
-                jobUrl = jenkinsRootUrl + "/job/" + jobName + "/";
-            } else {
-                listener.getLogger().println("[WARN] Could not determine Jenkins job URL. Please configure the Jenkins URL in the Jenkins global configuration.");
-                jobUrl = "";
-            }
+        // Construct job URL safely, handling folders and missing root URL
+        String jobUrl = "";
+        try {
+            jobUrl = run.getParent().getAbsoluteUrl();
+        } catch (IllegalStateException e) {
+            // Jenkins root URL is not configured
+            listener.getLogger()
+                    .println(
+                            "[WARN] Could not determine Jenkins job URL. Please configure the Jenkins URL in the global configuration.");
+        } catch (Exception e) {
+            // Handle any other exceptions gracefully
+            LOGGER.log(Level.WARNING, "Error getting job URL", e);
         }
 
         // Log initial context
         listener.getLogger().println("=== Starting ArmorCode Release Gate Check ===");
 
         // Poll up to maxRetries times
+        boolean failureHandled = false;
         for (int attempt = 1; attempt <= maxRetries; attempt++) {
             try {
-                // Process response - either from test override or from actual API call
-                JSONObject json;
-                if (testMode && testResponseString != null && !testResponseString.isEmpty()) {
-                    json = (JSONObject) JSONSerializer.toJSON(testResponseString);
-                } else {
-                    // Make the HTTP POST request and parse the response
-                    String responseStr = postArmorCodeRequest(
-                            listener, token, buildNumber, jobName, attempt, maxRetries, finalUrl, jobUrl);
-                    json = (JSONObject) JSONSerializer.toJSON(responseStr);
-                }
+                // Make the HTTP POST request and parse the response
+                String responseStr = postArmorCodeRequest(
+                        listener, token, buildNumber, jobName, attempt, maxRetries, finalUrl, jobUrl);
+                JSONObject json = (JSONObject) JSONSerializer.toJSON(responseStr);
                 String status = json.optString("status", "UNKNOWN");
                 listener.getLogger().println("=== ArmorCode Release Gate ===");
                 listener.getLogger().println("Status: " + status);
@@ -494,43 +450,32 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
                     listener.getLogger().println("[INFO] SLA is on HOLD. Sleeping " + retryDelay + "s...");
                     listener.getLogger()
                             .println(
-                                    "[INFO] Sleeping " + retryDelay + " seconds before trying again. You can temporarily release the build from ArmorCode console");
+                                    "[INFO] Sleeping " + retryDelay
+                                            + " seconds before trying again. You can temporarily release the build from ArmorCode console");
                     TimeUnit.SECONDS.sleep(retryDelay);
                 } else if ("FAILED".equalsIgnoreCase(status)) {
                     // SLA failure => provide detailed error with links
                     String detailedError = formatDetailedErrorMessage(run, json);
                     listener.getLogger().println(detailedError);
                     saveGateInfoToProperties(run, "FAIL");
-                    TimeUnit.SECONDS.sleep(retryDelay);
                     handleFailureMode(run, listener);
-                    if (!"warn".equalsIgnoreCase(mode)) {
-                        return;
+                    failureHandled = true;
+                    // In block mode, abort immediately. In warn mode, exit gracefully.
+                    if ("block".equalsIgnoreCase(mode)) {
+                        return; // Block mode already threw exception, but return for clarity
                     } else {
-                        // In warn mode, just break the retry loop and continue pipeline execution
-                        break;
+                        return; // Warn mode - build marked UNSTABLE, exit gracefully
                     }
                 } else {
                     // SUCCESS or RELEASE or other statuses => pass and break out
                     listener.getLogger().println("[INFO] ArmorCode check passed! Proceeding...");
                     saveGateInfoToProperties(run, "PASS");
-                    TimeUnit.SECONDS.sleep(retryDelay);
                     return;
                 }
-            } catch (QuitException | FlowInterruptedException e) {
-                // Rethrow to allow Jenkins to handle the interruption
-                throw e;
             } catch (AbortException e) {
-                run.setResult(Result.FAILURE);
-                throw new FlowInterruptedException(
-                        Result.FAILURE,
-                        new CauseOfInterruption.UserInterruption(
-                                "ArmorCode release gate failed: Security check did not pass"));
+                // Rethrow AbortException to allow Jenkins to handle it
+                throw e;
             } catch (Exception e) {
-                // Special handling for our enforcement signal
-                if (e.getMessage() != null && e.getMessage().equals("__ARMORCODE_ENFORCE_FAILURE__")) {
-                    throw new RuntimeException("ArmorCode release gate failed: Security check did not pass");
-                }
-
                 listener.getLogger().println("[ERROR] ArmorCode request failed: " + e.getMessage());
 
                 // If we've tried all retries, fail the build
@@ -545,9 +490,14 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
         }
 
         // If the loop completes without returning, it means max retries were hit on HOLD
-        listener.getLogger().println("[ERROR] ArmorCode check did not pass after " + maxRetries + " retries (last status was HOLD).");
-        saveGateInfoToProperties(run, "FAIL");
-        handleFailureMode(run, listener);
+        // Only handle failure if we haven't already handled it above
+        if (!failureHandled) {
+            listener.getLogger()
+                    .println("[ERROR] ArmorCode check did not pass after " + maxRetries
+                            + " retries (last status was HOLD).");
+            saveGateInfoToProperties(run, "FAIL");
+            handleFailureMode(run, listener);
+        }
     }
 
     /**
@@ -570,8 +520,7 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
         if (subProducts == null) {
             subProductsJsonArray = "[]";
         } else if (subProducts instanceof java.util.List) {
-            subProductsJsonArray =
-                    net.sf.json.JSONArray.fromObject(subProducts).toString();
+            subProductsJsonArray = net.sf.json.JSONArray.fromObject(subProducts).toString();
         } else {
             java.util.List<String> subProductList = java.util.Arrays.stream(((String) subProducts).split("\\r?\\n"))
                     .map(String::trim)
@@ -613,7 +562,8 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
 
         if (responseCode >= 200 && responseCode < 300) {
             // Success case
-            try (BufferedReader in = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+            try (BufferedReader in =
+                    new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
                 StringBuilder sb = new StringBuilder();
                 String line;
                 while ((line = in.readLine()) != null) {
@@ -625,7 +575,7 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
             // Error case - extract and log the error response
             StringBuilder errorResponse = new StringBuilder();
             try (BufferedReader errorReader =
-                         new BufferedReader(new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
+                    new BufferedReader(new InputStreamReader(conn.getErrorStream(), StandardCharsets.UTF_8))) {
                 String line;
                 while ((line = errorReader.readLine()) != null) {
                     errorResponse.append(line);
