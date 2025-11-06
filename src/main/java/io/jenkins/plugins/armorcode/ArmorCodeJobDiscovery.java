@@ -7,6 +7,7 @@ import hudson.model.Job;
 import hudson.model.Run;
 import hudson.model.TaskListener;
 import hudson.scheduler.CronTab;
+import hudson.scheduler.CronTabList;
 import io.jenkins.plugins.armorcode.config.ArmorCodeGlobalConfig;
 import io.jenkins.plugins.armorcode.credentials.CredentialsUtils;
 import java.io.*;
@@ -44,31 +45,15 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
 
     /**
      * Returns a fixed recurrence period of 1 minute.
-     * The actual execution logic in execute() checks if the cron expression matches the current time.
-     * This prevents multiple timers when configuration changes and ensures accurate cron scheduling.
+     * The actual execution logic in execute() checks if monitoring is enabled and
+     * if the cron expression matches the current time.
+     * Note: This method is only called once at startup by AsyncPeriodicWork.
      */
     @Override
     public long getRecurrencePeriod() {
-        try {
-            ArmorCodeGlobalConfig config = ArmorCodeGlobalConfig.get();
-
-            // Config might be null during plugin initialization
-            if (config == null) {
-                LOGGER.fine("[ArmorCode] Global config not yet loaded, using default 1-minute interval");
-                return TimeUnit.MINUTES.toMillis(1);
-            }
-
-            // If monitoring is disabled, use a longer interval to reduce overhead
-            if (!config.isMonitorBuilds()) {
-                return TimeUnit.HOURS.toMillis(1);
-            }
-
-            // Run every minute to check cron expression
-            return TimeUnit.MINUTES.toMillis(1);
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "[ArmorCode] Error getting recurrence period", e);
-            return TimeUnit.MINUTES.toMillis(1);
-        }
+        // Always return 1 minute since this is only called once at startup
+        // The execute() method handles whether to actually run based on config
+        return TimeUnit.MINUTES.toMillis(1);
     }
 
     /**
@@ -90,17 +75,9 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
                 return false;
             }
 
-            // Check if cron expression matches current time
-            CronTab cronTab = new CronTab(cronExpression);
-            Calendar previousSchedule = (Calendar) now.clone();
-            cronTab.floor(previousSchedule); // Get the most recent scheduled time
-
-            // Round down the previous schedule to the minute
-            previousSchedule.set(Calendar.SECOND, 0);
-            previousSchedule.set(Calendar.MILLISECOND, 0);
-
-            // If the most recent scheduled time matches the current minute, execute
-            if (previousSchedule.equals(currentMinute)) {
+            // Use CronTabList to check if current time matches the cron expression
+            CronTabList cronTabList = CronTabList.create(cronExpression);
+            if (cronTabList.check(currentMinute)) {
                 LOGGER.fine("[ArmorCode] Cron expression '" + cronExpression + "' matches current time "
                         + String.format("%tF %<tT", currentMinute) + " - executing discovery");
                 lastExecutionTime = currentMinute;
@@ -108,8 +85,7 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
             }
 
             LOGGER.fine("[ArmorCode] Cron expression '" + cronExpression + "' does not match current time "
-                    + String.format("%tF %<tT", currentMinute) + " (last scheduled: "
-                    + String.format("%tF %<tT", previousSchedule) + ")");
+                    + String.format("%tF %<tT", currentMinute));
             return false;
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "Error checking cron schedule: " + cronExpression, e);
@@ -141,7 +117,7 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
 
             // Check if we should execute based on cron expression
             String cronExpression = config.getCronExpression();
-            if (cronExpression == null || cronExpression.trim().isEmpty()) {
+            if (cronExpression == null || cronExpression.isBlank()) {
                 cronExpression = "H H * * 0"; // Default to weekly
             }
 
@@ -260,8 +236,7 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
     private boolean isUsingArmorCodePlugin(Job<?, ?> job) {
         // Method 1: For FreeStyle projects
         try {
-            if (job instanceof hudson.model.Project) {
-                hudson.model.Project project = (hudson.model.Project) job;
+            if (job instanceof hudson.model.Project project) {
                 for (Object builder : project.getBuildersList()) {
                     if (builder instanceof ArmorCodeReleaseGateBuilder) {
                         return true;
@@ -270,8 +245,7 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
             }
 
             // For other AbstractProject types (Matrix, etc.)
-            if (job instanceof hudson.model.AbstractProject) {
-                hudson.model.AbstractProject project = (hudson.model.AbstractProject) job;
+            if (job instanceof hudson.model.AbstractProject project) {
 
                 // Use reflection to access builders if getBuildersList() exists
                 try {
@@ -406,8 +380,8 @@ public class ArmorCodeJobDiscovery extends AsyncPeriodicWork {
             // For multibranch pipelines, the parent is the multibranch project itself
             if (parent.getClass().getName().contains("MultiBranchProject")) {
                 // Check if other branches in the same project use ArmorCode
-                for (Job<?, ?> siblingJob : Jenkins.get().getAllItems(Job.class)) {
-                    if (siblingJob != job && siblingJob.getParent() == parent) {
+                for (Job<?, ?> siblingJob : parent.getAllItems(Job.class)) {
+                    if (siblingJob != job) {
                         try {
                             Run<?, ?> siblingBuild = siblingJob.getLastBuild();
                             if (siblingBuild != null) {

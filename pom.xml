@@ -40,6 +40,7 @@
     <jenkins.pluginDescription>A Jenkins build step that polls ArmorCode's build validation endpoint to enforce release gates. It can operate in either "warn" mode (marking the build as UNSTABLE if validation fails) or "block" mode (failing the build).</jenkins.pluginDescription>
     <hpi.strictBundledArtifacts>true</hpi.strictBundledArtifacts>
     <spotless.check.skip>false</spotless.check.skip>
+      <maven.compiler.release>17</maven.compiler.release>
     <git.useExistingClientIfPresent>false</git.useExistingClientIfPresent>
   </properties>
 

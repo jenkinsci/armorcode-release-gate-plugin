@@ -189,20 +189,25 @@ public class ArmorCodeJobDiscoveryTest {
     public void testGetRecurrencePeriod() throws Exception {
         ArmorCodeGlobalConfig config = ArmorCodeGlobalConfig.get();
 
-        // Test case 1: Monitoring disabled - should return 1 hour
+        // getRecurrencePeriod() is only called once at startup by AsyncPeriodicWork
+        // So it always returns 1 minute regardless of config
+        // The execute() method handles whether to actually run based on config and cron
+
+        // Test case 1: Monitoring disabled - should still return 1 minute
+        // (execute() method will skip execution when monitoring is disabled)
         config.setMonitorBuilds(false);
         config.save();
         assertEquals(
-                "Should be 1 hour when disabled",
-                TimeUnit.HOURS.toMillis(1),
+                "Should always be 1 minute (called once at startup)",
+                TimeUnit.MINUTES.toMillis(1),
                 discovery.getRecurrencePeriod());
 
-        // Test case 2: Monitoring enabled - should return 1 minute (fixed interval)
-        // The actual execution is controlled by cron matching in execute()
+        // Test case 2: Monitoring enabled - should return 1 minute
+        // (execute() method checks cron expression for actual execution)
         config.setMonitorBuilds(true);
         config.save();
         assertEquals(
-                "Should be 1 minute when enabled",
+                "Should always be 1 minute (called once at startup)",
                 TimeUnit.MINUTES.toMillis(1),
                 discovery.getRecurrencePeriod());
     }

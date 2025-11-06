@@ -315,12 +315,12 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
     private boolean isNullOrEmpty(Object value) {
         if (value == null) return true;
         if (value instanceof String) {
-            return ((String) value).trim().isEmpty();
+            return ((String) value).isBlank();
         }
         if (value instanceof java.util.Collection) {
             return ((java.util.Collection<?>) value).isEmpty();
         }
-        return value.toString().trim().isEmpty();
+        return value.toString().isBlank();
     }
 
     private void validateSecurityPrerequisites(Run<?, ?> run, TaskListener listener, String token)
@@ -396,14 +396,14 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
         ArmorCodeGlobalConfig globalConfig = ArmorCodeGlobalConfig.get();
 
         // If the job-specific URL is not provided, use the global one.
-        if (apiBaseUrl == null || apiBaseUrl.trim().isEmpty()) {
+        if (apiBaseUrl == null || apiBaseUrl.isBlank()) {
             if (globalConfig != null) {
                 apiBaseUrl = globalConfig.getBaseUrl();
             }
         }
 
         // If no URL is configured anywhere, use the default.
-        if (apiBaseUrl == null || apiBaseUrl.trim().isEmpty()) {
+        if (apiBaseUrl == null || apiBaseUrl.isBlank()) {
             apiBaseUrl = "https://app.armorcode.com";
         }
 
