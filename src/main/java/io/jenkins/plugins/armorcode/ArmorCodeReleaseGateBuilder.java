@@ -99,6 +99,8 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
     }
 
     public Object getSubProducts() {
+        // Return raw value to ensure UI displays correctly in Freestyle builds
+        // Users can refer to help documentation for proper pipeline array syntax
         return subProducts;
     }
 
@@ -115,7 +117,8 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
     }
 
     public String getTargetUrl() {
-        return targetUrl;
+        // Return null if empty so it doesn't appear in snippet generator
+        return (targetUrl == null || targetUrl.isBlank()) ? null : targetUrl;
     }
 
     private int retryDelay = 20; // seconds
@@ -615,6 +618,16 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
         @Override
         public String getId() {
             return "armorcodeReleaseGate";
+        }
+
+        /**
+         * Populates the mode dropdown with available options.
+         */
+        public hudson.util.ListBoxModel doFillModeItems() {
+            hudson.util.ListBoxModel items = new hudson.util.ListBoxModel();
+            items.add("Block build on failure", "block");
+            items.add("Warn but continue build", "warn");
+            return items;
         }
     }
 }
