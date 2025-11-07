@@ -99,6 +99,8 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
     }
 
     public Object getSubProducts() {
+        // Return raw value to ensure UI displays correctly in Freestyle builds
+        // Users can refer to help documentation for proper pipeline array syntax
         return subProducts;
     }
 
@@ -115,7 +117,8 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
     }
 
     public String getTargetUrl() {
-        return targetUrl;
+        // Return null if empty so it doesn't appear in snippet generator
+        return (targetUrl == null || targetUrl.isBlank()) ? null : targetUrl;
     }
 
     private int retryDelay = 20; // seconds
@@ -315,12 +318,12 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
     private boolean isNullOrEmpty(Object value) {
         if (value == null) return true;
         if (value instanceof String) {
-            return ((String) value).trim().isEmpty();
+            return ((String) value).isBlank();
         }
         if (value instanceof java.util.Collection) {
             return ((java.util.Collection<?>) value).isEmpty();
         }
-        return value.toString().trim().isEmpty();
+        return value.toString().isBlank();
     }
 
     private void validateSecurityPrerequisites(Run<?, ?> run, TaskListener listener, String token)
@@ -396,14 +399,14 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
         ArmorCodeGlobalConfig globalConfig = ArmorCodeGlobalConfig.get();
 
         // If the job-specific URL is not provided, use the global one.
-        if (apiBaseUrl == null || apiBaseUrl.trim().isEmpty()) {
+        if (apiBaseUrl == null || apiBaseUrl.isBlank()) {
             if (globalConfig != null) {
                 apiBaseUrl = globalConfig.getBaseUrl();
             }
         }
 
         // If no URL is configured anywhere, use the default.
-        if (apiBaseUrl == null || apiBaseUrl.trim().isEmpty()) {
+        if (apiBaseUrl == null || apiBaseUrl.isBlank()) {
             apiBaseUrl = "https://app.armorcode.com";
         }
 
@@ -615,6 +618,16 @@ public class ArmorCodeReleaseGateBuilder extends Builder implements SimpleBuildS
         @Override
         public String getId() {
             return "armorcodeReleaseGate";
+        }
+
+        /**
+         * Populates the mode dropdown with available options.
+         */
+        public hudson.util.ListBoxModel doFillModeItems() {
+            hudson.util.ListBoxModel items = new hudson.util.ListBoxModel();
+            items.add("Block build on failure", "block");
+            items.add("Warn but continue build", "warn");
+            return items;
         }
     }
 }

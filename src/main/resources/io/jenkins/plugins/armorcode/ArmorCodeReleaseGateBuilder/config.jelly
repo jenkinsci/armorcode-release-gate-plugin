@@ -7,7 +7,7 @@
             <f:textbox />
         </f:entry>
 
-        <f:entry title="Sub-Groups" field="subProducts" description="ArmorCode sub-group (sub-product) identifiers. Enter one per line for multiple.">
+        <f:entry title="Sub-Groups" field="subProducts" description="ArmorCode sub-group (sub-product) identifiers. Enter one per line for multiple sub-groups.">
             <f:textarea />
         </f:entry>
 
@@ -25,10 +25,7 @@
             </f:entry>
 
             <f:entry title="Mode" field="mode" description="Behavior when security validation fails">
-                <select name="mode" class="setting-input">
-                    <option value="block">Block build on failure</option>
-                    <option value="warn">Warn but continue build</option>
-                </select>
+                <f:select/>
             </f:entry>
 
             <f:entry title="Target URL" field="targetUrl" description="Override ArmorCode API URL (leave empty to use global config)">
