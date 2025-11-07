@@ -170,7 +170,7 @@ public class ArmorCodeGlobalConfig extends GlobalConfiguration {
 
     @DataBoundSetter
     public void setCronExpression(String cronExpression) {
-        if (cronExpression == null || cronExpression.trim().isEmpty()) {
+        if (cronExpression == null || cronExpression.isBlank()) {
             this.cronExpression = "H H * * *"; // default to daily once per day at a random hour
         } else {
             this.cronExpression = cronExpression;
@@ -185,7 +185,7 @@ public class ArmorCodeGlobalConfig extends GlobalConfiguration {
     @POST
     public FormValidation doCheckCronExpression(@QueryParameter String value) {
         Jenkins.get().checkPermission(Jenkins.ADMINISTER);
-        if (value == null || value.trim().isEmpty()) {
+        if (value == null || value.isBlank()) {
             return FormValidation.error("Cron Expression must not be empty");
         }
 
