@@ -6,7 +6,6 @@ import hudson.model.AsyncPeriodicWork;
 import hudson.model.Job;
 import hudson.model.Run;
 import hudson.model.TaskListener;
-import hudson.scheduler.CronTab;
 import hudson.scheduler.CronTabList;
 import io.jenkins.plugins.armorcode.config.ArmorCodeGlobalConfig;
 import io.jenkins.plugins.armorcode.credentials.CredentialsUtils;

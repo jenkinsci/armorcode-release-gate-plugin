@@ -107,8 +107,7 @@ public class ArmorCodeJobDiscoveryTest {
         // Don't run the build - just check if the config XML contains the step
         WorkflowJob pipelineWithPlugin = jenkins.createProject(WorkflowJob.class, "pipeline-with-plugin");
         pipelineWithPlugin.setDefinition(new CpsFlowDefinition(
-                "node { armorcodeReleaseGate(product: '1', subProducts: ['1'], env: '1') }",
-                true));
+                "node { armorcodeReleaseGate(product: '1', subProducts: ['1'], env: '1') }", true));
 
         // Create a pipeline project without the ArmorCode step
         WorkflowJob pipelineWithoutPlugin = jenkins.createProject(WorkflowJob.class, "pipeline-without-plugin");
@@ -140,7 +139,7 @@ public class ArmorCodeJobDiscoveryTest {
         // 1. Should be included (matches include, not exclude, has plugin)
         FreeStyleProject job1 = jenkins.createFreeStyleProject("prod-job-1");
         ArmorCodeReleaseGateBuilderTest.MockArmorCodeReleaseGateBuilder mockBuilder =
-            new ArmorCodeReleaseGateBuilderTest.MockArmorCodeReleaseGateBuilder("1", "1", "1");
+                new ArmorCodeReleaseGateBuilderTest.MockArmorCodeReleaseGateBuilder("1", "1", "1");
         mockBuilder.setMockResponse("{\"status\":\"SUCCESS\"}");
         job1.getBuildersList().add(mockBuilder);
 
