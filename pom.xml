@@ -11,7 +11,7 @@
 
   <groupId>io.jenkins.plugins</groupId>
   <artifactId>armorcode-release-gate</artifactId>
-  <version>${revision}${changelist}</version>
+  <version>${changelist}</version>
   <packaging>hpi</packaging>
   <name>ArmorCode Release Gate</name>
   <description>A Jenkins build step that polls ArmorCode's build validation endpoint to enforce release gates. It can operate in either "warn" mode (marking the build as UNSTABLE if validation fails) or "block" mode (failing the build).</description>
@@ -31,16 +31,13 @@
   </scm>
 
   <properties>
-    <revision>1.0.5</revision>
-    <changelist>-SNAPSHOT</changelist>
-    <!-- https://www.jenkins.io/doc/developer/plugin-development/choosing-jenkins-baseline/ -->
+    <changelist>999999-SNAPSHOT</changelist>
     <jenkins.baseline>2.479</jenkins.baseline>
     <jenkins.version>${jenkins.baseline}.3</jenkins.version>
     <jenkins.pluginName>ArmorCode Release Gate</jenkins.pluginName>
     <jenkins.pluginDescription>A Jenkins build step that polls ArmorCode's build validation endpoint to enforce release gates. It can operate in either "warn" mode (marking the build as UNSTABLE if validation fails) or "block" mode (failing the build).</jenkins.pluginDescription>
     <hpi.strictBundledArtifacts>true</hpi.strictBundledArtifacts>
     <spotless.check.skip>false</spotless.check.skip>
-      <maven.compiler.release>17</maven.compiler.release>
     <git.useExistingClientIfPresent>false</git.useExistingClientIfPresent>
   </properties>
 
