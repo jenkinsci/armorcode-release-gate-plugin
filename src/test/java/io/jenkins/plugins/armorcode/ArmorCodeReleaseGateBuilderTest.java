@@ -1,7 +1,7 @@
 package io.jenkins.plugins.armorcode;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.cloudbees.plugins.credentials.CredentialsScope;
 import com.cloudbees.plugins.credentials.SystemCredentialsProvider;
@@ -12,14 +12,13 @@ import hudson.model.Result;
 import hudson.model.TaskListener;
 import hudson.util.Secret;
 import org.jenkinsci.plugins.plaincredentials.impl.StringCredentialsImpl;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.jvnet.hudson.test.JenkinsRule;
+import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 
-public class ArmorCodeReleaseGateBuilderTest {
-
-    @Rule
-    public JenkinsRule jenkins = new JenkinsRule();
+@WithJenkins
+class ArmorCodeReleaseGateBuilderTest {
 
     public static class MockArmorCodeReleaseGateBuilder extends ArmorCodeReleaseGateBuilder {
 
@@ -64,8 +63,15 @@ public class ArmorCodeReleaseGateBuilderTest {
         }
     }
 
+    private JenkinsRule j;
+
+    @BeforeEach
+    void beforeEach(JenkinsRule rule) {
+        j = rule;
+    }
+
     @Test
-    public void testBlockModeBehavior() throws Exception {
+    void testBlockModeBehavior() throws Exception {
         // Create a credential
         String tokenValue = "my-secret-token";
         StringCredentialsImpl credential = new StringCredentialsImpl(
@@ -74,7 +80,7 @@ public class ArmorCodeReleaseGateBuilderTest {
         SystemCredentialsProvider.getInstance().save();
 
         // Create a freestyle project
-        FreeStyleProject project = jenkins.createFreeStyleProject("test-block-mode");
+        FreeStyleProject project = j.createFreeStyleProject("test-block-mode");
 
         // Create the builder with block mode
         MockArmorCodeReleaseGateBuilder builder = new MockArmorCodeReleaseGateBuilder("123", "456", "Production");
@@ -88,11 +94,11 @@ public class ArmorCodeReleaseGateBuilderTest {
         FreeStyleBuild build = project.scheduleBuild2(0).get();
 
         // Verify the build was marked as failed
-        assertEquals("Build should be failed in block mode", Result.FAILURE, build.getResult());
+        assertEquals(Result.FAILURE, build.getResult(), "Build should be failed in block mode");
     }
 
     @Test
-    public void testWarnModeBehavior() throws Exception {
+    void testWarnModeBehavior() throws Exception {
         // Create a credential
         String tokenValue = "my-secret-token";
         StringCredentialsImpl credential = new StringCredentialsImpl(
@@ -101,7 +107,7 @@ public class ArmorCodeReleaseGateBuilderTest {
         SystemCredentialsProvider.getInstance().save();
 
         // Create a freestyle project
-        FreeStyleProject project = jenkins.createFreeStyleProject("test-warn-mode");
+        FreeStyleProject project = j.createFreeStyleProject("test-warn-mode");
 
         // Create the builder with warn mode
         MockArmorCodeReleaseGateBuilder builder = new MockArmorCodeReleaseGateBuilder("123", "456", "Production");
@@ -121,15 +127,15 @@ public class ArmorCodeReleaseGateBuilderTest {
         FreeStyleBuild build = project.scheduleBuild2(0).get();
 
         // Verify the build was marked as unstable
-        assertEquals("Build should be unstable in warn mode", Result.UNSTABLE, build.getResult());
+        assertEquals(Result.UNSTABLE, build.getResult(), "Build should be unstable in warn mode");
 
         // Verify the build continued (shell command ran)
         String log = build.getLog();
-        assertTrue("Build should continue in warn mode", log.contains("Should reach here in warn mode"));
+        assertTrue(log.contains("Should reach here in warn mode"), "Build should continue in warn mode");
     }
 
     @Test
-    public void testSuccessModeBehavior() throws Exception {
+    void testSuccessModeBehavior() throws Exception {
         // Create a credential
         String tokenValue = "my-secret-token";
         StringCredentialsImpl credential = new StringCredentialsImpl(
@@ -138,7 +144,7 @@ public class ArmorCodeReleaseGateBuilderTest {
         SystemCredentialsProvider.getInstance().save();
 
         // Create a freestyle project
-        FreeStyleProject project = jenkins.createFreeStyleProject("test-success-mode");
+        FreeStyleProject project = j.createFreeStyleProject("test-success-mode");
 
         // Create the builder
         MockArmorCodeReleaseGateBuilder builder = new MockArmorCodeReleaseGateBuilder("123", "456", "Production");
@@ -151,11 +157,11 @@ public class ArmorCodeReleaseGateBuilderTest {
         FreeStyleBuild build = project.scheduleBuild2(0).get();
 
         // Verify the build was marked as success
-        assertEquals("Build should be successful", Result.SUCCESS, build.getResult());
+        assertEquals(Result.SUCCESS, build.getResult(), "Build should be successful");
     }
 
     @Test
-    public void testHoldModeBehavior() throws Exception {
+    void testHoldModeBehavior() throws Exception {
         // Create a credential
         String tokenValue = "my-secret-token";
         StringCredentialsImpl credential = new StringCredentialsImpl(
@@ -164,7 +170,7 @@ public class ArmorCodeReleaseGateBuilderTest {
         SystemCredentialsProvider.getInstance().save();
 
         // Create a freestyle project
-        FreeStyleProject project = jenkins.createFreeStyleProject("test-hold-mode");
+        FreeStyleProject project = j.createFreeStyleProject("test-hold-mode");
 
         // Create the builder
         MockArmorCodeReleaseGateBuilder builder = new MockArmorCodeReleaseGateBuilder("123", "456", "Production");
@@ -180,14 +186,14 @@ public class ArmorCodeReleaseGateBuilderTest {
         FreeStyleBuild build = project.scheduleBuild2(0).get();
 
         // Verify the build was marked as failed
-        assertEquals("Build should fail after exhausting retries on HOLD", Result.FAILURE, build.getResult());
+        assertEquals(Result.FAILURE, build.getResult(), "Build should fail after exhausting retries on HOLD");
         String log = build.getLog();
         assertTrue(log.contains("SLA is on HOLD. Sleeping 1s..."));
         assertTrue(log.contains("ArmorCode check did not pass after 2 retries (last status was HOLD)."));
     }
 
     @Test
-    public void testInvalidResponseFailure() throws Exception {
+    void testInvalidResponseFailure() throws Exception {
         // Create a credential
         String tokenValue = "my-secret-token";
         StringCredentialsImpl credential = new StringCredentialsImpl(
@@ -196,7 +202,7 @@ public class ArmorCodeReleaseGateBuilderTest {
         SystemCredentialsProvider.getInstance().save();
 
         // Create a freestyle project
-        FreeStyleProject project = jenkins.createFreeStyleProject("test-invalid-response");
+        FreeStyleProject project = j.createFreeStyleProject("test-invalid-response");
 
         // Create the builder
         MockArmorCodeReleaseGateBuilder builder = new MockArmorCodeReleaseGateBuilder("123", "456", "Production");
@@ -211,7 +217,7 @@ public class ArmorCodeReleaseGateBuilderTest {
         FreeStyleBuild build = project.scheduleBuild2(0).get();
 
         // Verify the build was marked as failed
-        assertEquals("Build should fail with invalid JSON response", Result.FAILURE, build.getResult());
+        assertEquals(Result.FAILURE, build.getResult(), "Build should fail with invalid JSON response");
         String log = build.getLog();
         assertTrue(log.contains("ArmorCode request failed:"));
         assertTrue(log.contains("ArmorCode request error after maximum retries."));
