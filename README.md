@@ -29,12 +29,13 @@ The plugin also includes a job discovery feature that periodically scans for Jen
 
 ## Installation
 
-1.  Manually download the `.hpi` plugin file from the plugin's release page.
-2.  In Jenkins, navigate to **Manage Jenkins > Plugins > Advanced settings**.
-3.  In the **Deploy Plugin** section, upload the downloaded `.hpi` file.
-4.  Restart Jenkins to complete the installation.
+To install the plugin from the Jenkins Marketplace:
 
-Once installed, the ArmorCode Release Gate plugin will be available as a build step for Freestyle projects and in the Pipeline Syntax Snippet Generator.
+1. In **Jenkins**, navigate to **Manage Jenkins > Plugins**.    
+2. On the **Plugins** page, select the **Available Plugins** tab.
+3. In the filter field, search for the `ArmorCode Release Gate` plugin.
+4. Click **Install** to begin the installation.
+5. **Verification**: Navigate to the **Installed Plugins** tab and verify that the **ArmorCode Release Gate plugin** is listed.
 
 ## Configuration
 

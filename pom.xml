@@ -31,6 +31,11 @@
       <name>Deepanshu Rawat</name>
       <email>deepanshu.rawat@armorcode.io</email>
     </developer>
+    <developer>
+      <id>mayankpruthi</id>
+      <name>Mayank Pruthi</name>
+      <email>mayank.pruthi@armorcode.io</email>
+    </developer>
   </developers>
 
   <scm>
@@ -50,6 +55,7 @@
     <gitHubRepo>jenkinsci/${project.artifactId}-plugin</gitHubRepo>
     <spotless.check.skip>false</spotless.check.skip>
     <git.useExistingClientIfPresent>false</git.useExistingClientIfPresent>
+    <ban-junit4-imports.skip>true</ban-junit4-imports.skip>
   </properties>
 
   <dependencyManagement>
