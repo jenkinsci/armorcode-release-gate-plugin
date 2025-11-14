@@ -1,26 +1,32 @@
 package io.jenkins.plugins.armorcode;
 
-import static org.junit.Assert.*;
+import static org.junit.jupiter.api.Assertions.*;
 
 import hudson.util.FormValidation;
 import io.jenkins.plugins.armorcode.config.ArmorCodeGlobalConfig;
-import org.junit.Rule;
-import org.junit.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
 import org.jvnet.hudson.test.JenkinsRule;
+import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 
 /**
  * Test cases for ArmorCode global configuration.
  */
-public class ArmorCodeGlobalConfigTest {
+@WithJenkins
+class ArmorCodeGlobalConfigTest {
 
-    @Rule
-    public JenkinsRule jenkins = new JenkinsRule();
+    private JenkinsRule j;
+
+    @BeforeEach
+    void beforeEach(JenkinsRule rule) {
+        j = rule;
+    }
 
     /**
      * Test that global configuration can be saved and loaded correctly.
      */
     @Test
-    public void testGlobalConfigSaveAndLoad() {
+    void testGlobalConfigSaveAndLoad() {
         // Get the configuration
         ArmorCodeGlobalConfig config = ArmorCodeGlobalConfig.get();
 
@@ -36,16 +42,16 @@ public class ArmorCodeGlobalConfigTest {
         ArmorCodeGlobalConfig reloaded = ArmorCodeGlobalConfig.get();
 
         // Verify values are preserved
-        assertEquals("Base URL should be preserved", "http://localhost:3000/test", reloaded.getBaseUrl());
-        assertFalse("Monitor builds setting should be preserved", reloaded.isMonitorBuilds());
-        assertEquals("Job filter should be preserved", "prod.*,!test.*", reloaded.getJobFilter());
+        assertEquals("http://localhost:3000/test", reloaded.getBaseUrl(), "Base URL should be preserved");
+        assertFalse(reloaded.isMonitorBuilds(), "Monitor builds setting should be preserved");
+        assertEquals("prod.*,!test.*", reloaded.getJobFilter(), "Job filter should be preserved");
     }
 
     /**
      * Test URL validation logic.
      */
     @Test
-    public void testUrlValidation() {
+    void testUrlValidation() {
         ArmorCodeGlobalConfig config = ArmorCodeGlobalConfig.get();
 
         // Empty URL
