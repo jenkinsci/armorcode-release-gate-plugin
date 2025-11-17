@@ -1,7 +1,6 @@
 package io.jenkins.plugins.armorcode;
 
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.*;
 
 import hudson.util.FormValidation;
 import io.jenkins.plugins.armorcode.config.ArmorCodeGlobalConfig;

@@ -20,6 +20,13 @@ import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 @WithJenkins
 class ArmorCodeReleaseGateBuilderTest {
 
+    private JenkinsRule j;
+
+    @BeforeEach
+    void beforeEach(JenkinsRule rule) {
+        j = rule;
+    }
+
     public static class MockArmorCodeReleaseGateBuilder extends ArmorCodeReleaseGateBuilder {
 
         private String mockResponse;

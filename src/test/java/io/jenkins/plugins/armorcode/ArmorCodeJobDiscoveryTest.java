@@ -1,6 +1,8 @@
 package io.jenkins.plugins.armorcode;
 
-import static org.junit.jupiter.api.Assertions.*;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.cloudbees.plugins.credentials.CredentialsScope;
 import com.cloudbees.plugins.credentials.SystemCredentialsProvider;
@@ -24,17 +26,15 @@ import org.jvnet.hudson.test.junit.jupiter.WithJenkins;
 @WithJenkins
 class ArmorCodeJobDiscoveryTest {
 
+    private JenkinsRule j;
     private ArmorCodeJobDiscovery discovery;
     private Method shouldMonitorJobMethod;
     private Method isUsingArmorCodePluginMethod;
     private Method collectJobsDataMethod;
 
-    private JenkinsRule j;
-
     @BeforeEach
     void beforeEach(JenkinsRule rule) throws Exception {
         j = rule;
-
         discovery = new ArmorCodeJobDiscovery();
         shouldMonitorJobMethod = ArmorCodeJobDiscovery.class.getDeclaredMethod(
                 "shouldMonitorJob", String.class, String.class, String.class);
@@ -196,7 +196,7 @@ class ArmorCodeJobDiscoveryTest {
     }
 
     @Test
-    void testGetRecurrencePeriod() {
+    void testGetRecurrencePeriod() throws Exception {
         ArmorCodeGlobalConfig config = ArmorCodeGlobalConfig.get();
 
         // getRecurrencePeriod() is only called once at startup by AsyncPeriodicWork
