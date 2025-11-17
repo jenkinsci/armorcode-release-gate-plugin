@@ -33,7 +33,7 @@ class ArmorCodeJobDiscoveryTest {
     private Method collectJobsDataMethod;
 
     @BeforeEach
-    void setUp(JenkinsRule rule) throws Exception {
+    void beforeEach(JenkinsRule rule) throws Exception {
         j = rule;
         discovery = new ArmorCodeJobDiscovery();
         shouldMonitorJobMethod = ArmorCodeJobDiscovery.class.getDeclaredMethod(
