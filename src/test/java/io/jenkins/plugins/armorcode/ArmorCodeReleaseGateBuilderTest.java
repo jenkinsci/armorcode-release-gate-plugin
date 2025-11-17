@@ -70,13 +70,6 @@ class ArmorCodeReleaseGateBuilderTest {
         }
     }
 
-    private JenkinsRule j;
-
-    @BeforeEach
-    void beforeEach(JenkinsRule rule) {
-        j = rule;
-    }
-
     @Test
     void testBlockModeBehavior() throws Exception {
         // Create a credential
